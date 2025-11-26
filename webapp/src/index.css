@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+	height: 100%;
+}
+
+.app-grid {
+	display: grid;
+	grid-template-columns: 280px 4px 1fr 4px 320px;
+	grid-template-rows: auto 1fr auto;
+	grid-template-areas:
+		"sidebar resizerL header resizerR right"
+		"sidebar resizerL main resizerR right"
+		"sidebar resizerL composer resizerR right";
+	height: 100vh;
+}
+
+.sidebar { grid-area: sidebar; }
+.header { grid-area: header; }
+.main { grid-area: main; }
+.composer { grid-area: composer; }
+.rightbar { grid-area: right; border-left: 1px solid rgb(229 231 235 / var(--tw-border-opacity, 1)); }
+
+.resizer {
+	cursor: col-resize;
+	background: transparent;
+	z-index: 10;
+}
+.resizerL { grid-area: resizerL; }
+.resizerR { grid-area: resizerR; }
+.resizer:hover {
+	background: rgba(0,0,0,0.06);
+}
+.dark .resizer:hover {
+	background: rgba(255,255,255,0.06);
+}
+
+.row-resizer {
+	height: 4px;
+	cursor: row-resize;
+	background: transparent;
+	width: 100%;
+}
+.row-resizer:hover {
+	background: rgba(0,0,0,0.06);
+}
+.dark .row-resizer:hover {
+	background: rgba(255,255,255,0.06);
+}
+
+

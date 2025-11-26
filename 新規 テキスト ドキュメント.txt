@@ -1,0 +1,65 @@
+
+
+
+
+
+
+Please create a web application that I can run locally on my web browser.
+I want the main web page to feature a multimodal LLM service, with a layout comparable to Gemini or ChatGPT or other popular LLMs.
+What are the steps you would take to achieve this task?
+
+
+OK please proceed with all the 5 Milestones
+
+
+are there alternatives to Gemini and OpenAI that do not require keys, and offer multimodal?
+
+
+which - among these models - require less than 6GB of VRAM?
+
+
+OK, pull all 3 and make them available in settings
+
+
+add a rename button right before the delete button of every chat, and make it possible to edit the name of the chat.
+
+
+can you add a model preset for LLaMA 3.2-b?
+
+
+when using llama3.2:3b, if I tick the box for addition MCP tool, and I prompt "what is 1+2?", it should use the MCP Tool?
+How to use
+Settings: Provider Ollama, Model llama3.2:3b
+Right panel → MCP Tools: tick “Add two numbers”
+Prompt: “what is 1+2?”
+You should get “3” directly from the tool. If you ask something else, it streams from the model.
+
+
+
+
+
+divide the right column into a top and bottom panes. make the frontier between top and bottom moveable for resizing. Call the top one "MCP agents", and display a list of agents (none for the time being). And the bottom one, call it "Window".... In the Window pane, make a 2D rendered window, and display a rotating triangle for the time being.
+
+
+Great !
+Can you develop an MCP tool that can add 2 numbers?
+
+
+Rename "MCP agents" into "MCP Tools"..
+Can you make that MCP tool available in the list of MCP tools?
+By the way, I cannot connect to http://localhost:5173/ anymore....
+
+
+Create en MCP tools to retrieve the weather information in a specific location mentioned by the user.
+From now on, add all new MCP Tools to the list...
+Make sure the list can be long, and that - if the list is longer than the space available, a scroll bar appear.
+Make sure that in front of the MCP Tool name there is a tick box... when ticked, MCP Tool is active and can be used... when unticked, the MCP Tools cannot be used.  
+
+
+
+
+Now, we are going to implement MCP Tools for GMAIL, so I can ask things like "how many emails did I receive from this person?", "when was the latest email I received from this person?", "what are the most important emails I received today?", "can you list all unread emails by order of importance?".
+I want these MCP Tools to be secure, reliable, free and fast. What approach do you suggest?
+
+
+
