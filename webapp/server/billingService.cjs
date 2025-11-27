@@ -1,18 +1,22 @@
 /**
  * Billing & Rate Limit Protection Service
  * 
- * IMPORTANT DISTINCTION:
- * =====================
- * 1. GOOGLE SERVICES (Gmail, Calendar) - PAID SERVICES
- *    - Can charge your credit card if you exceed free tier
+ * ============================================================
+ * IMPORTANT: ONLY GOOGLE SERVICES CAN HAVE BILLING!
+ * ============================================================
+ * 
+ * 1. GOOGLE SERVICES ONLY (Gmail, Calendar) - PAID SERVICES
+ *    - ⚠️ CAN charge your credit card if you exceed free tier
  *    - Requires billing protection to prevent unexpected charges
  *    - Monthly cost limits enforced (default: $0)
+ *    - The 💰 billing indicator applies ONLY to Google
  * 
- * 2. FREE SERVICES (Slack, Jira) - NO BILLING
- *    - 100% FREE - no credit card required
+ * 2. FREE SERVICES (Slack, GitHub, Jira) - NO BILLING EVER
+ *    - ✅ 100% FREE - no credit card required, never asked
  *    - Only have rate limits (requests per minute/day)
  *    - Rate limit tracking only (no actual billing/costs)
- *    - Will never charge you money
+ *    - Will NEVER charge you money under any circumstances
+ *    - The 💬 and 🐙 indicators are for rate limits only, NOT billing
  */
 
 class BillingProtectionService {
@@ -43,6 +47,13 @@ class BillingProtectionService {
 				warningThreshold: parseFloat(process.env.SLACK_WARNING_THRESHOLD || '0.8'),
 				hardLimit: parseFloat(process.env.SLACK_HARD_LIMIT || '0.95')
 			},
+			github: {
+				// GitHub API is 100% FREE - no billing, just rate limits
+				// Authenticated: 5,000 requests/hour
+				dailyQuota: parseInt(process.env.GITHUB_DAILY_QUOTA || '120000'), // 5k/hour * 24 hours
+				warningThreshold: parseFloat(process.env.GITHUB_WARNING_THRESHOLD || '0.8'),
+				hardLimit: parseFloat(process.env.GITHUB_HARD_LIMIT || '0.95')
+			},
 			// Note: Jira is also FREE (not tracked here yet)
 			
 			// ============================================================
@@ -61,17 +72,23 @@ class BillingProtectionService {
 			gmail: { today: 0, resetTime: new Date() },
 			calendar: { today: 0, resetTime: new Date() },
 			slack: { today: 0, resetTime: new Date() },
+			github: { today: 0, resetTime: new Date() },
 			costs: { thisMonth: 0, lastUpdate: null },
 			rateLimit: { minute: [], hour: [] }
 		};
 
 		console.log('[BillingService] Initialized with limits:');
-		console.log('  GOOGLE (PAID) - Billing protection active:');
+		console.log('  ========================================');
+		console.log('  GOOGLE ONLY (PAID) - Billing protection active:');
 		console.log(`    Gmail: ${this.limits.gmail.dailyQuota.toLocaleString()} units/day`);
 		console.log(`    Calendar: ${this.limits.calendar.dailyQuota.toLocaleString()} queries/day`);
 		console.log(`    Monthly cost limit: $${this.limits.monthlyCostLimit}`);
-		console.log('  FREE SERVICES - Rate limit tracking only (no billing):');
-		console.log(`    Slack: ${this.limits.slack.dailyQuota.toLocaleString()} requests/day`);
+		console.log('  ========================================');
+		console.log('  FREE SERVICES - NO BILLING EVER (rate limits only):');
+		console.log(`    Slack: ${this.limits.slack.dailyQuota.toLocaleString()} requests/day (100% FREE)`);
+		console.log(`    GitHub: ${this.limits.github.dailyQuota.toLocaleString()} requests/day (100% FREE)`);
+		console.log(`    Jira: No limits (100% FREE)`);
+		console.log('  ========================================');
 		console.log(`  Rate limits: ${this.limits.maxRequestsPerMinute}/min, ${this.limits.maxRequestsPerHour}/hour`);
 	}
 
@@ -276,6 +293,13 @@ class BillingProtectionService {
 				get: 1,         // Tier 3: 50/min
 				history: 1,     // Tier 3: 50/min
 				send: 1         // Tier 2: 20/min
+			},
+			github: {
+				// GitHub API costs (all operations cost 1 request)
+				list: 1,        // List repos, commits, PRs, issues
+				get: 1,         // Get repo, commit, PR, issue details
+				search: 1,      // Search code, repos, issues
+				read: 1         // Read file contents
 			}
 		};
 		
@@ -338,6 +362,12 @@ class BillingProtectionService {
 				used: this.usage.slack.today,
 				limit: this.limits.slack.dailyQuota,
 				percent: (this.usage.slack.today / this.limits.slack.dailyQuota) * 100,
+				resetTime: this.getNextResetTime().toISOString()
+			},
+			github: {
+				used: this.usage.github.today,
+				limit: this.limits.github.dailyQuota,
+				percent: (this.usage.github.today / this.limits.github.dailyQuota) * 100,
 				resetTime: this.getNextResetTime().toISOString()
 			},
 			costs: {

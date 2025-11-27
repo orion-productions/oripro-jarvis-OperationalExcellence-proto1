@@ -287,6 +287,89 @@ const MCP_TOOLS = [
 			properties: {},
 		},
 	},
+	// GitHub Tools
+	{
+		name: "github_list_repos",
+		title: "GitHub: List repositories",
+		inputSchema: {
+			type: "object",
+			properties: {
+				type: { type: "string" },
+				sort: { type: "string" }
+			},
+		},
+	},
+	{
+		name: "github_repo_details",
+		title: "GitHub: Get repository details",
+		inputSchema: {
+			type: "object",
+			properties: {
+				repo: { type: "string" }
+			},
+			required: ["repo"],
+		},
+	},
+	{
+		name: "github_commits",
+		title: "GitHub: List commits in repository",
+		inputSchema: {
+			type: "object",
+			properties: {
+				repo: { type: "string" },
+				branch: { type: "string" },
+				limit: { type: "number" }
+			},
+			required: ["repo"],
+		},
+	},
+	{
+		name: "github_commit_details",
+		title: "GitHub: Get commit details",
+		inputSchema: {
+			type: "object",
+			properties: {
+				repo: { type: "string" },
+				sha: { type: "string" }
+			},
+			required: ["repo", "sha"],
+		},
+	},
+	{
+		name: "github_search_code",
+		title: "GitHub: Search code across repositories",
+		inputSchema: {
+			type: "object",
+			properties: {
+				query: { type: "string" }
+			},
+			required: ["query"],
+		},
+	},
+	{
+		name: "github_pull_requests",
+		title: "GitHub: List pull requests",
+		inputSchema: {
+			type: "object",
+			properties: {
+				repo: { type: "string" },
+				state: { type: "string" }
+			},
+			required: ["repo"],
+		},
+	},
+	{
+		name: "github_issues",
+		title: "GitHub: List issues",
+		inputSchema: {
+			type: "object",
+			properties: {
+				repo: { type: "string" },
+				state: { type: "string" }
+			},
+			required: ["repo"],
+		},
+	},
 ];
 
 app.get("/mcp/tools", (req, res) => {
@@ -1421,6 +1504,376 @@ app.post("/mcp/tools/slack/mentions", async (req, res) => {
 		});
 	} catch (error) {
 		console.error("[Slack Mentions]", error.message);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// ============================================================================
+// GITHUB MCP TOOLS
+// ============================================================================
+
+const githubAuth = require("./githubAuthService.cjs");
+
+// GitHub: List repositories
+app.post("/mcp/tools/github/repos", async (req, res) => {
+	try {
+		if (!githubAuth.isAuthenticated()) {
+			return res.status(401).json({
+				ok: false,
+				error: "Not authenticated",
+				message: "GitHub token not configured. Set GITHUB_TOKEN in .env"
+			});
+		}
+
+		const check = await billingService.checkAndUpdateUsage('github', 'list');
+		if (!check.allowed) {
+			return res.status(403).json({
+				ok: false,
+				blocked: true,
+				message: check.message
+			});
+		}
+
+		const repos = await githubAuth.listRepositories({
+			type: req.body.type || 'all',
+			sort: req.body.sort || 'updated'
+		});
+
+		res.json({
+			ok: true,
+			repositories: repos.map(r => ({
+				name: r.name,
+				full_name: r.full_name,
+				description: r.description,
+				language: r.language,
+				stars: r.stargazers_count,
+				forks: r.forks_count,
+				updated_at: r.updated_at,
+				url: r.html_url,
+				private: r.private
+			})),
+			total: repos.length,
+			warning: check.warning
+		});
+	} catch (error) {
+		console.error("[GitHub List Repos]", error.message);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// GitHub: Get repository details
+app.post("/mcp/tools/github/repo-details", async (req, res) => {
+	try {
+		if (!githubAuth.isAuthenticated()) {
+			return res.status(401).json({
+				ok: false,
+				error: "Not authenticated",
+				message: "GitHub token not configured"
+			});
+		}
+
+		const check = await billingService.checkAndUpdateUsage('github', 'get');
+		if (!check.allowed) {
+			return res.status(403).json({
+				ok: false,
+				blocked: true,
+				message: check.message
+			});
+		}
+
+		const repoName = req.body.repo;
+		if (!repoName) {
+			return res.status(400).json({ ok: false, error: "Repository name is required" });
+		}
+
+		const repo = await githubAuth.getRepository(repoName);
+
+		res.json({
+			ok: true,
+			repository: {
+				name: repo.name,
+				full_name: repo.full_name,
+				description: repo.description,
+				language: repo.language,
+				stars: repo.stargazers_count,
+				forks: repo.forks_count,
+				watchers: repo.watchers_count,
+				open_issues: repo.open_issues_count,
+				created_at: repo.created_at,
+				updated_at: repo.updated_at,
+				pushed_at: repo.pushed_at,
+				size: repo.size,
+				default_branch: repo.default_branch,
+				url: repo.html_url,
+				homepage: repo.homepage,
+				topics: repo.topics,
+				license: repo.license?.name
+			},
+			warning: check.warning
+		});
+	} catch (error) {
+		console.error("[GitHub Repo Details]", error.message);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// GitHub: List commits
+app.post("/mcp/tools/github/commits", async (req, res) => {
+	try {
+		if (!githubAuth.isAuthenticated()) {
+			return res.status(401).json({
+				ok: false,
+				error: "Not authenticated",
+				message: "GitHub token not configured"
+			});
+		}
+
+		const check = await billingService.checkAndUpdateUsage('github', 'list');
+		if (!check.allowed) {
+			return res.status(403).json({
+				ok: false,
+				blocked: true,
+				message: check.message
+			});
+		}
+
+		const repoName = req.body.repo;
+		if (!repoName) {
+			return res.status(400).json({ ok: false, error: "Repository name is required" });
+		}
+
+		const commits = await githubAuth.listCommits(repoName, {
+			perPage: req.body.limit || 30,
+			branch: req.body.branch
+		});
+
+		res.json({
+			ok: true,
+			repository: repoName,
+			commits: commits.map(c => ({
+				sha: c.sha.substring(0, 7),
+				full_sha: c.sha,
+				message: c.commit.message,
+				author: c.commit.author.name,
+				date: c.commit.author.date,
+				url: c.html_url
+			})),
+			total: commits.length,
+			warning: check.warning
+		});
+	} catch (error) {
+		console.error("[GitHub Commits]", error.message);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// GitHub: Get commit details
+app.post("/mcp/tools/github/commit-details", async (req, res) => {
+	try {
+		if (!githubAuth.isAuthenticated()) {
+			return res.status(401).json({
+				ok: false,
+				error: "Not authenticated",
+				message: "GitHub token not configured"
+			});
+		}
+
+		const check = await billingService.checkAndUpdateUsage('github', 'get');
+		if (!check.allowed) {
+			return res.status(403).json({
+				ok: false,
+				blocked: true,
+				message: check.message
+			});
+		}
+
+		const { repo, sha } = req.body;
+		if (!repo || !sha) {
+			return res.status(400).json({ ok: false, error: "Repository and SHA are required" });
+		}
+
+		const commit = await githubAuth.getCommit(repo, sha);
+
+		res.json({
+			ok: true,
+			commit: {
+				sha: commit.sha.substring(0, 7),
+				full_sha: commit.sha,
+				message: commit.commit.message,
+				author: {
+					name: commit.commit.author.name,
+					email: commit.commit.author.email,
+					date: commit.commit.author.date
+				},
+				committer: {
+					name: commit.commit.committer.name,
+					date: commit.commit.committer.date
+				},
+				stats: commit.stats,
+				files: commit.files?.map(f => ({
+					filename: f.filename,
+					status: f.status,
+					additions: f.additions,
+					deletions: f.deletions,
+					changes: f.changes
+				})),
+				url: commit.html_url
+			},
+			warning: check.warning
+		});
+	} catch (error) {
+		console.error("[GitHub Commit Details]", error.message);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// GitHub: Search code
+app.post("/mcp/tools/github/search-code", async (req, res) => {
+	try {
+		if (!githubAuth.isAuthenticated()) {
+			return res.status(401).json({
+				ok: false,
+				error: "Not authenticated",
+				message: "GitHub token not configured"
+			});
+		}
+
+		const check = await billingService.checkAndUpdateUsage('github', 'search');
+		if (!check.allowed) {
+			return res.status(403).json({
+				ok: false,
+				blocked: true,
+				message: check.message
+			});
+		}
+
+		const query = req.body.query;
+		if (!query) {
+			return res.status(400).json({ ok: false, error: "Search query is required" });
+		}
+
+		const result = await githubAuth.searchCode(query, {
+			perPage: req.body.limit || 20
+		});
+
+		res.json({
+			ok: true,
+			items: result.items.map(item => ({
+				name: item.name,
+				path: item.path,
+				repository: item.repository.name,
+				url: item.html_url,
+				score: item.score
+			})),
+			total: result.total_count,
+			warning: check.warning
+		});
+	} catch (error) {
+		console.error("[GitHub Search Code]", error.message);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// GitHub: List pull requests
+app.post("/mcp/tools/github/pull-requests", async (req, res) => {
+	try {
+		if (!githubAuth.isAuthenticated()) {
+			return res.status(401).json({
+				ok: false,
+				error: "Not authenticated",
+				message: "GitHub token not configured"
+			});
+		}
+
+		const check = await billingService.checkAndUpdateUsage('github', 'list');
+		if (!check.allowed) {
+			return res.status(403).json({
+				ok: false,
+				blocked: true,
+				message: check.message
+			});
+		}
+
+		const repoName = req.body.repo;
+		if (!repoName) {
+			return res.status(400).json({ ok: false, error: "Repository name is required" });
+		}
+
+		const prs = await githubAuth.listPullRequests(repoName, {
+			state: req.body.state || 'open'
+		});
+
+		res.json({
+			ok: true,
+			repository: repoName,
+			pull_requests: prs.map(pr => ({
+				number: pr.number,
+				title: pr.title,
+				state: pr.state,
+				author: pr.user.login,
+				created_at: pr.created_at,
+				updated_at: pr.updated_at,
+				url: pr.html_url
+			})),
+			total: prs.length,
+			warning: check.warning
+		});
+	} catch (error) {
+		console.error("[GitHub Pull Requests]", error.message);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// GitHub: List issues
+app.post("/mcp/tools/github/issues", async (req, res) => {
+	try {
+		if (!githubAuth.isAuthenticated()) {
+			return res.status(401).json({
+				ok: false,
+				error: "Not authenticated",
+				message: "GitHub token not configured"
+			});
+		}
+
+		const check = await billingService.checkAndUpdateUsage('github', 'list');
+		if (!check.allowed) {
+			return res.status(403).json({
+				ok: false,
+				blocked: true,
+				message: check.message
+			});
+		}
+
+		const repoName = req.body.repo;
+		if (!repoName) {
+			return res.status(400).json({ ok: false, error: "Repository name is required" });
+		}
+
+		const issues = await githubAuth.listIssues(repoName, {
+			state: req.body.state || 'open'
+		});
+
+		// Filter out pull requests (GitHub treats PRs as issues)
+		const actualIssues = issues.filter(issue => !issue.pull_request);
+
+		res.json({
+			ok: true,
+			repository: repoName,
+			issues: actualIssues.map(issue => ({
+				number: issue.number,
+				title: issue.title,
+				state: issue.state,
+				author: issue.user.login,
+				labels: issue.labels.map(l => l.name),
+				created_at: issue.created_at,
+				updated_at: issue.updated_at,
+				url: issue.html_url
+			})),
+			total: actualIssues.length,
+			warning: check.warning
+		});
+	} catch (error) {
+		console.error("[GitHub Issues]", error.message);
 		res.status(500).json({ ok: false, error: error.message });
 	}
 });

@@ -38,15 +38,20 @@ An intelligent AI assistant with **MCP (Model Context Protocol) Tools** that sea
 
 ### 💰 **Billing Protection**
 
-**Google Services** (Gmail, Calendar)
-- 🛡️ Cost tracking and quota monitoring
+**⚠️ ONLY Google Services Can Have Billing Costs!**
+
+**Google Services ONLY** (Gmail, Calendar) - **PAID**
+- 💳 **CAN charge credit card** if free tier exceeded
+- 🛡️ Real-time cost tracking ($0.00 displayed in UI)
 - 🛡️ Hard limits to prevent unexpected charges
 - 🛡️ Blocks requests at 95% of free tier
 - 🛡️ Monthly cost limit: $0 by default
 
-**Free Services** (Slack, Jira)
-- 🛡️ Rate limit tracking only
-- 🛡️ No billing - 100% free
+**Free Services** (Slack, GitHub, Jira) - **100% FREE**
+- ✅ **NO credit card** required (never asked)
+- ✅ **NO billing** - will never charge you
+- 🛡️ Rate limit tracking only (💬 🐙 indicators)
+- ✅ **FREE forever** - no hidden costs
 - 🛡️ Prevents hitting API rate limits
 
 ### 🎨 **User Interface**
@@ -107,6 +112,10 @@ An intelligent AI assistant with **MCP (Model Context Protocol) Tools** that sea
    # OR
    SLACK_USER_TOKEN=xoxp-your-user-token
 
+   # GitHub (Optional)
+   GITHUB_TOKEN=ghp-your-personal-access-token
+   GITHUB_OWNER=your-org-or-username
+
    # Google Services (Optional)
    GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
    GOOGLE_CLIENT_SECRET=your-client-secret
@@ -130,6 +139,7 @@ Detailed setup instructions for each service:
 
 - 📋 **[Jira Setup Guide](webapp/JIRA_SETUP.md)** - Configure Jira API access
 - 💬 **[Slack Setup Guide](webapp/SLACK_SETUP.md)** - Configure Slack integration
+- 🐙 **[GitHub Setup Guide](webapp/GITHUB_SETUP.md)** - Configure GitHub API access
 - 📧 **[Google Setup Guide](webapp/GOOGLE_SETUP.md)** - Configure Gmail & Calendar
 
 ---
@@ -185,6 +195,7 @@ Detailed setup instructions for each service:
   - 📧 Gmail quota usage
   - 📅 Calendar quota usage
   - 💬 Slack rate limits
+  - 🐙 GitHub rate limits
 
 ---
 
@@ -256,6 +267,13 @@ SLACK_USER_TOKEN=xoxp-...          # User token
 SLACK_DAILY_QUOTA=10000            # Daily request limit
 ```
 
+#### **GitHub** (Optional)
+```bash
+GITHUB_TOKEN=ghp-...               # Personal Access Token
+GITHUB_OWNER=your-org-name         # Organization or username
+GITHUB_DAILY_QUOTA=120000          # Daily request limit (5k/hour)
+```
+
 #### **Google Services** (Optional)
 ```bash
 GOOGLE_CLIENT_ID=...apps.googleusercontent.com
@@ -306,10 +324,11 @@ npm run test:ui
 - ✅ Use environment variables for all credentials
 
 ### Billing Protection
-- ✅ Hard limits prevent unexpected charges
+- ⚠️ **Google ONLY:** Hard limits prevent unexpected charges
+- ✅ **Google ONLY:** Real-time cost monitoring ($0.00 = no charges)
 - ✅ Daily quota tracking for all services
 - ✅ Automatic blocking at 95% usage
-- ✅ Real-time cost monitoring for Google services
+- ✅ **Slack/GitHub/Jira:** 100% FREE - no billing ever
 
 ### Token Management
 - ✅ OAuth2 refresh token handling
@@ -338,6 +357,17 @@ npm run test:ui
 | `slack_latest_message` | Get latest message | *"Last message in #general"* |
 | `slack_count_from_user` | Count user messages | *"How many from @john in #dev"* |
 | `slack_mentions` | Get your mentions | *"Show my mentions"* |
+
+### GitHub Tools
+| Tool Name | Description | Example |
+|-----------|-------------|---------|
+| `github_list_repos` | List repositories | *"List my repos"* |
+| `github_repo_details` | Repository details | *"Details for repo X"* |
+| `github_commits` | List commits | *"List commits in repo X"* |
+| `github_commit_details` | Commit details | *"Show commit abc1234"* |
+| `github_search_code` | Search code | *"Search for 'useState' in github"* |
+| `github_pull_requests` | List pull requests | *"List PRs in repo X"* |
+| `github_issues` | List issues | *"Show issues for repo X"* |
 
 ### Gmail Tools (Optional)
 | Tool Name | Description | Example |

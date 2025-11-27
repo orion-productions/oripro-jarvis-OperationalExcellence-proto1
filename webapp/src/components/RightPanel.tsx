@@ -14,6 +14,7 @@ export function RightPanel() {
 		gmail: { used: number; limit: number; percent: number };
 		calendar: { used: number; limit: number; percent: number };
 		slack?: { used: number; limit: number; percent: number };
+		github?: { used: number; limit: number; percent: number };
 		costs: { thisMonth: number; limit: number };
 		authenticated: boolean;
 	} | null>(null);
@@ -163,62 +164,84 @@ export function RightPanel() {
 				<div className="px-3 py-2 text-xs uppercase tracking-wide text-neutral-500 flex items-center justify-between">
 					<span>MCP Tools</span>
 					<div className="flex items-center gap-2">
-						{/* Billing/Usage Display */}
-						{billingStatus && (
-							<div className="flex items-center gap-1.5 text-[10px] normal-case">
-								{/* Google Billing - Cost indicator (PAID services) */}
-								<div className="flex items-center gap-1.5" title="Google API Costs (paid services only)">
-									<span className={`font-mono ${billingStatus.costs.thisMonth > 0 ? 'text-red-500 font-semibold' : 'text-green-600 dark:text-green-500'}`}>
-										💰${billingStatus.costs.thisMonth.toFixed(2)}
+					{/* Billing/Usage Display */}
+					{billingStatus && (
+						<div className="flex items-center gap-1.5 text-[10px] normal-case">
+							{/* ===== GOOGLE ONLY (CAN HAVE BILLING) ===== */}
+							<div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800" title="Google Services ONLY - May incur costs if free tier exceeded">
+								<span className={`font-mono font-semibold ${billingStatus.costs.thisMonth > 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-500'}`}>
+									💰${billingStatus.costs.thisMonth.toFixed(2)}
+								</span>
+								<span className="text-neutral-400 dark:text-neutral-600">|</span>
+								{/* Gmail usage */}
+								<span 
+									className={`${
+										billingStatus.gmail.percent > 80 ? 'text-orange-600 dark:text-orange-400' : 
+										billingStatus.gmail.percent > 50 ? 'text-yellow-600 dark:text-yellow-500' : 
+										'text-neutral-600 dark:text-neutral-400'
+									}`}
+									title={`Gmail: ${billingStatus.gmail.used.toLocaleString()}/${billingStatus.gmail.limit.toLocaleString()} units (Google - free tier, may cost if exceeded)`}
+								>
+									📧{billingStatus.gmail.percent.toFixed(1)}%
+								</span>
+								{/* Calendar usage */}
+								<span 
+									className={`${
+										billingStatus.calendar.percent > 80 ? 'text-orange-600 dark:text-orange-400' : 
+										billingStatus.calendar.percent > 50 ? 'text-yellow-600 dark:text-yellow-500' : 
+										'text-neutral-600 dark:text-neutral-400'
+									}`}
+									title={`Calendar: ${billingStatus.calendar.used.toLocaleString()}/${billingStatus.calendar.limit.toLocaleString()} queries (Google - free tier, may cost if exceeded)`}
+								>
+									📅{billingStatus.calendar.percent.toFixed(1)}%
+								</span>
+								{/* Auth status */}
+								{!billingStatus.authenticated && (
+									<span className="text-yellow-600" title="Google not authenticated">
+										🔒
 									</span>
-									<span className="text-neutral-400 dark:text-neutral-600">|</span>
-									{/* Gmail usage */}
-									<span 
-										className={`${
-											billingStatus.gmail.percent > 80 ? 'text-orange-500' : 
-											billingStatus.gmail.percent > 50 ? 'text-yellow-600' : 
-											'text-neutral-500'
-										}`}
-										title={`Gmail: ${billingStatus.gmail.used.toLocaleString()}/${billingStatus.gmail.limit.toLocaleString()} units (Google - free tier)`}
-									>
-										📧{billingStatus.gmail.percent.toFixed(1)}%
-									</span>
-									{/* Calendar usage */}
-									<span 
-										className={`${
-											billingStatus.calendar.percent > 80 ? 'text-orange-500' : 
-											billingStatus.calendar.percent > 50 ? 'text-yellow-600' : 
-											'text-neutral-500'
-										}`}
-										title={`Calendar: ${billingStatus.calendar.used.toLocaleString()}/${billingStatus.calendar.limit.toLocaleString()} queries (Google - free tier)`}
-									>
-										📅{billingStatus.calendar.percent.toFixed(1)}%
-									</span>
-									{/* Auth status */}
-									{!billingStatus.authenticated && (
-										<span className="text-yellow-600" title="Google not authenticated">
-											🔒
-										</span>
-									)}
-								</div>
-								{/* Slack Rate Limits (FREE service - no billing) */}
-								{billingStatus.slack && (
-									<>
-										<span className="text-neutral-400 dark:text-neutral-600">|</span>
-										<span 
-											className={`${
-												billingStatus.slack.percent > 80 ? 'text-orange-500' : 
-												billingStatus.slack.percent > 50 ? 'text-yellow-600' : 
-												'text-neutral-500'
-											}`}
-											title={`Slack: ${billingStatus.slack.used.toLocaleString()}/${billingStatus.slack.limit.toLocaleString()} requests (FREE - rate limit only, no billing)`}
-										>
-											💬{billingStatus.slack.percent.toFixed(1)}%
-										</span>
-									</>
 								)}
 							</div>
-						)}
+							
+							{/* ===== FREE SERVICES (NO BILLING EVER) ===== */}
+							{(billingStatus.slack || billingStatus.github) && (
+								<>
+									<span className="text-neutral-400 dark:text-neutral-600">|</span>
+									<div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800" title="Free Services - NO billing ever, rate limits only">
+										{/* Slack (100% FREE) */}
+										{billingStatus.slack && (
+											<span 
+												className={`${
+													billingStatus.slack.percent > 80 ? 'text-orange-600 dark:text-orange-400' : 
+													billingStatus.slack.percent > 50 ? 'text-yellow-600 dark:text-yellow-500' : 
+													'text-neutral-600 dark:text-neutral-400'
+												}`}
+												title={`Slack: ${billingStatus.slack.used.toLocaleString()}/${billingStatus.slack.limit.toLocaleString()} requests (100% FREE - no billing ever)`}
+											>
+												💬{billingStatus.slack.percent.toFixed(1)}%
+											</span>
+										)}
+										{/* GitHub (100% FREE) */}
+										{billingStatus.github && (
+											<>
+												{billingStatus.slack && <span className="text-neutral-400 dark:text-neutral-600">|</span>}
+												<span 
+													className={`${
+														billingStatus.github.percent > 80 ? 'text-orange-600 dark:text-orange-400' : 
+														billingStatus.github.percent > 50 ? 'text-yellow-600 dark:text-yellow-500' : 
+														'text-neutral-600 dark:text-neutral-400'
+													}`}
+													title={`GitHub: ${billingStatus.github.used.toLocaleString()}/${billingStatus.github.limit.toLocaleString()} requests (100% FREE - no billing ever)`}
+												>
+													🐙{billingStatus.github.percent.toFixed(1)}%
+												</span>
+											</>
+										)}
+									</div>
+								</>
+							)}
+					</div>
+					)}
 						<button
 							className="text-[11px] px-2 py-0.5 rounded border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800"
 							onClick={() => {

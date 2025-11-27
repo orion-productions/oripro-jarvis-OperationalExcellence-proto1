@@ -95,6 +95,14 @@ const DEFAULT_ACTIVE_TOOLS: Record<string, boolean> = {
 	slack_count_from_user: true,
 	slack_latest_message: true,
 	slack_mentions: true,
+	// Enable GitHub tools by default
+	github_list_repos: true,
+	github_repo_details: true,
+	github_commits: true,
+	github_commit_details: true,
+	github_search_code: true,
+	github_pull_requests: true,
+	github_issues: true,
 	// Other sample tools
 	add: true,
 	weather: true,
@@ -1149,7 +1157,468 @@ export const useChatStore = create<ChatState>((set, getState) => ({
 				}
 			}
 			
-			// Add a transient system instruction to reply in the detected language
+			// ============================================================
+			// GITHUB PATTERN MATCHING
+			// ============================================================
+			
+			// GitHub: Latest commit across all repos (organization-wide)
+			if (getState().activeTools?.["github_list_repos"] && getState().activeTools?.["github_commits"]) {
+				// Match: "when was latest commit?", "latest commit and on what repo?", "most recent commit", etc.
+				// But NOT: "latest commit in repo X" (that should use specific repo pattern)
+				const hasLatestCommitQuery = /\b(?:when|what|show|get)\s+(?:was|is)?\s*(?:the\s+)?(?:latest|last|most\s+recent)\s+commit/i.test(content) ||
+				                            /\b(?:latest|last|most\s+recent)\s+commit(?:\s+(?:on|in|across|for))?\s*(?:github|organization|all|any)?/i.test(content);
+				const hasSpecificRepo = /\b(?:in|for|from)\s+(?:repo(?:sitory)?\s+)?['"]?[a-zA-Z0-9_.-]+['"]?/i.test(content);
+				
+				if (hasLatestCommitQuery && !hasSpecificRepo) {
+					try {
+						assistantMsg.status = "streaming";
+						set({ conversations: [...getState().conversations] });
+						
+						// Fetch all repos sorted by updated time
+						const resp = await fetch("http://localhost:3001/mcp/tools/github/repos", {
+							method: "POST",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({}),
+						});
+						const json = await resp.json();
+						if (resp.ok && json?.ok && json.repositories && json.repositories.length > 0) {
+							// Repos are already sorted by updated_at (most recent first)
+							const mostRecentRepo = json.repositories[0];
+							
+							// Fetch the latest commit from the most recent repo
+							const commitResp = await fetch("http://localhost:3001/mcp/tools/github/commits", {
+								method: "POST",
+								headers: { "Content-Type": "application/json" },
+								body: JSON.stringify({ repo: mostRecentRepo.name, limit: 1 }),
+							});
+							const commitJson = await commitResp.json();
+							
+							if (commitResp.ok && commitJson?.ok && commitJson.commits && commitJson.commits.length > 0) {
+								const latestCommit = commitJson.commits[0];
+								assistantMsg.content = `**Latest commit across all repositories:**\n\n` +
+									`**Repository:** ${mostRecentRepo.name}\n` +
+									`**Commit:** \`${latestCommit.sha}\`\n` +
+									`**Message:** ${latestCommit.message.split('\n')[0]}\n` +
+									`**Author:** ${latestCommit.author}\n` +
+									`**Date:** ${new Date(latestCommit.date).toLocaleString()}\n` +
+									`\n[View commit](${latestCommit.url})`;
+							} else {
+								// Fallback to showing the repo push date
+								assistantMsg.content = `**Most recently updated repository:**\n\n` +
+									`**${mostRecentRepo.name}**\n` +
+									`Last pushed: ${new Date(mostRecentRepo.updated_at).toLocaleString()}`;
+							}
+							
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						} else if (resp.status === 401) {
+							assistantMsg.content = json.message || "GitHub not configured.";
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						} else if (resp.status === 403 && json.blocked) {
+							assistantMsg.content = json.message || "GitHub usage limit exceeded.";
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						} else {
+							assistantMsg.content = "No repositories found.";
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						}
+					} catch {}
+				}
+			}
+			
+			// GitHub: List repositories
+			if (getState().activeTools?.["github_list_repos"]) {
+				// Match: "list my repos", "show my repositories", "what repos do I have?"
+				if (/\b(?:list|show|get|what)\s+(?:my\s+|all\s+)?(?:github\s+)?(?:repositories|repos)(?:\?)?/i.test(content)) {
+					try {
+						assistantMsg.status = "streaming";
+						set({ conversations: [...getState().conversations] });
+						
+						const resp = await fetch("http://localhost:3001/mcp/tools/github/repos", {
+							method: "POST",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({}),
+						});
+						const json = await resp.json();
+						if (resp.ok && json?.ok) {
+							const repos = json.repositories || [];
+							if (repos.length === 0) {
+								assistantMsg.content = "No repositories found.";
+							} else {
+								const summary = repos.slice(0, 10).map((repo: any) => 
+									`- **${repo.name}** ${repo.private ? '🔒' : '🌐'} (${repo.language || 'No language'}) - ⭐ ${repo.stars}\n  ${repo.description || 'No description'}`
+								).join("\n");
+								assistantMsg.content = `Found ${json.total} repositories:\n\n${summary}${json.total > 10 ? `\n\n... and ${json.total - 10} more` : ''}`;
+							}
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						} else if (resp.status === 401) {
+							assistantMsg.content = json.message || "GitHub not configured.";
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						} else if (resp.status === 403 && json.blocked) {
+							assistantMsg.content = json.message || "GitHub usage limit exceeded.";
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						}
+					} catch {}
+				}
+			}
+			
+			// GitHub: Repository details
+			if (getState().activeTools?.["github_repo_details"]) {
+				// Match: "details for repo X", "show me repo X", "info about repository X"
+				const repoMatch = content.match(/\b(?:details?|info(?:rmation)?|show|get|describe)\s+(?:for|about|me)?\s*(?:the\s+)?(?:repo(?:sitory)?\s+)?['"]?([a-zA-Z0-9_.-]+)['"]?/i);
+				if (repoMatch) {
+					const repoName = repoMatch[1];
+					try {
+						assistantMsg.status = "streaming";
+						set({ conversations: [...getState().conversations] });
+						
+						const resp = await fetch("http://localhost:3001/mcp/tools/github/repo-details", {
+							method: "POST",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({ repo: repoName }),
+						});
+						const json = await resp.json();
+						if (resp.ok && json?.ok && json.repository) {
+							const repo = json.repository;
+							assistantMsg.content = `**${repo.full_name}** ${repo.private ? '🔒 Private' : '🌐 Public'}\n\n` +
+								`${repo.description || 'No description'}\n\n` +
+								`**Language:** ${repo.language || 'N/A'}\n` +
+								`**Stars:** ⭐ ${repo.stars} | **Forks:** 🔱 ${repo.forks} | **Watchers:** 👁️ ${repo.watchers}\n` +
+								`**Open Issues:** ${repo.open_issues}\n` +
+								`**Default Branch:** ${repo.default_branch}\n` +
+								`**Size:** ${(repo.size / 1024).toFixed(2)} MB\n` +
+								`**Created:** ${new Date(repo.created_at).toLocaleDateString()}\n` +
+								`**Last Updated:** ${new Date(repo.updated_at).toLocaleDateString()}\n` +
+								`**Last Pushed:** ${new Date(repo.pushed_at).toLocaleDateString()}\n` +
+								(repo.homepage ? `**Homepage:** ${repo.homepage}\n` : '') +
+								(repo.license ? `**License:** ${repo.license}\n` : '') +
+								`\n[View on GitHub](${repo.url})`;
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						} else if (resp.status === 401) {
+							assistantMsg.content = json.message || "GitHub not configured.";
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						} else if (resp.status === 403 && json.blocked) {
+							assistantMsg.content = json.message || "GitHub usage limit exceeded.";
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						}
+					} catch {}
+				}
+			}
+			
+			// GitHub: List commits
+			if (getState().activeTools?.["github_commits"]) {
+				// Match: "list commits in repo X", "show commits for X", "recent commits in X"
+				const commitMatch = content.match(/\b(?:list|show|get|recent)\s+(?:the\s+)?commits?\s+(?:in|for|from)\s+(?:the\s+)?(?:repo(?:sitory)?\s+)?['"]?([a-zA-Z0-9_.-]+)['"]?/i);
+				if (commitMatch) {
+					const repoName = commitMatch[1];
+					try {
+						assistantMsg.status = "streaming";
+						set({ conversations: [...getState().conversations] });
+						
+						const resp = await fetch("http://localhost:3001/mcp/tools/github/commits", {
+							method: "POST",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({ repo: repoName, limit: 10 }),
+						});
+						const json = await resp.json();
+						if (resp.ok && json?.ok) {
+							const commits = json.commits || [];
+							if (commits.length === 0) {
+								assistantMsg.content = `No commits found in repository **${repoName}**.`;
+							} else {
+								const summary = commits.map((commit: any) => 
+									`- \`${commit.sha}\` - ${commit.message.split('\n')[0]} (${commit.author}, ${new Date(commit.date).toLocaleDateString()})`
+								).join("\n");
+								assistantMsg.content = `Recent commits in **${repoName}**:\n\n${summary}`;
+							}
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						} else if (resp.status === 401) {
+							assistantMsg.content = json.message || "GitHub not configured.";
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						} else if (resp.status === 403 && json.blocked) {
+							assistantMsg.content = json.message || "GitHub usage limit exceeded.";
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						}
+					} catch {}
+				}
+			}
+			
+			// GitHub: Search code
+			if (getState().activeTools?.["github_search_code"]) {
+				// Match: "search for X in github", "find code containing X", "search repos for X"
+				const searchMatch = content.match(/\b(?:search|find)\s+(?:for\s+|code\s+)?(?:containing\s+)?['"]?([^'"]{3,})['"]?\s+(?:in|across)\s+(?:my\s+)?(?:github|repos?)/i);
+				if (searchMatch) {
+					const query = searchMatch[1];
+					try {
+						assistantMsg.status = "streaming";
+						set({ conversations: [...getState().conversations] });
+						
+						const resp = await fetch("http://localhost:3001/mcp/tools/github/search-code", {
+							method: "POST",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({ query }),
+						});
+						const json = await resp.json();
+						if (resp.ok && json?.ok) {
+							const items = json.items || [];
+							if (items.length === 0) {
+								assistantMsg.content = `No code found matching "${query}".`;
+							} else {
+								const summary = items.slice(0, 10).map((item: any) => 
+									`- **${item.repository}**/${item.path}\n  [View](${item.url})`
+								).join("\n");
+								assistantMsg.content = `Found ${json.total} code results for "${query}":\n\n${summary}${json.total > 10 ? `\n\n... and ${json.total - 10} more` : ''}`;
+							}
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						} else if (resp.status === 401) {
+							assistantMsg.content = json.message || "GitHub not configured.";
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						} else if (resp.status === 403 && json.blocked) {
+							assistantMsg.content = json.message || "GitHub usage limit exceeded.";
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						}
+					} catch {}
+				}
+			}
+			
+			// GitHub: Pull requests
+			if (getState().activeTools?.["github_pull_requests"]) {
+				// Match: "list PRs in repo X", "show pull requests for X", "open PRs in X"
+				const prMatch = content.match(/\b(?:list|show|get|open)\s+(?:the\s+)?(?:pull\s+requests?|PRs?)\s+(?:in|for|from)\s+(?:the\s+)?(?:repo(?:sitory)?\s+)?['"]?([a-zA-Z0-9_.-]+)['"]?/i);
+				if (prMatch) {
+					const repoName = prMatch[1];
+					try {
+						assistantMsg.status = "streaming";
+						set({ conversations: [...getState().conversations] });
+						
+						const resp = await fetch("http://localhost:3001/mcp/tools/github/pull-requests", {
+							method: "POST",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({ repo: repoName, state: 'open' }),
+						});
+						const json = await resp.json();
+						if (resp.ok && json?.ok) {
+							const prs = json.pull_requests || [];
+							if (prs.length === 0) {
+								assistantMsg.content = `No open pull requests in **${repoName}**.`;
+							} else {
+								const summary = prs.slice(0, 10).map((pr: any) => 
+									`- **#${pr.number}** - ${pr.title}\n  Author: ${pr.author} | State: ${pr.state} | [View](${pr.url})`
+								).join("\n");
+								assistantMsg.content = `Pull requests in **${repoName}**:\n\n${summary}${json.total > 10 ? `\n\n... and ${json.total - 10} more` : ''}`;
+							}
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						} else if (resp.status === 401) {
+							assistantMsg.content = json.message || "GitHub not configured.";
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						} else if (resp.status === 403 && json.blocked) {
+							assistantMsg.content = json.message || "GitHub usage limit exceeded.";
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						}
+					} catch {}
+				}
+			}
+			
+			// GitHub: Issues
+			if (getState().activeTools?.["github_issues"]) {
+				// Match: "list issues in repo X", "show issues for X", "open issues in X"
+				const issueMatch = content.match(/\b(?:list|show|get|open)\s+(?:the\s+)?issues?\s+(?:in|for|from)\s+(?:the\s+)?(?:repo(?:sitory)?\s+)?['"]?([a-zA-Z0-9_.-]+)['"]?/i);
+				if (issueMatch) {
+					const repoName = issueMatch[1];
+					try {
+						assistantMsg.status = "streaming";
+						set({ conversations: [...getState().conversations] });
+						
+						const resp = await fetch("http://localhost:3001/mcp/tools/github/issues", {
+							method: "POST",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({ repo: repoName, state: 'open' }),
+						});
+						const json = await resp.json();
+						if (resp.ok && json?.ok) {
+							const issues = json.issues || [];
+							if (issues.length === 0) {
+								assistantMsg.content = `No open issues in **${repoName}**.`;
+							} else {
+								const summary = issues.slice(0, 10).map((issue: any) => 
+									`- **#${issue.number}** - ${issue.title}\n  Author: ${issue.author} | Labels: ${issue.labels.join(', ') || 'None'} | [View](${issue.url})`
+								).join("\n");
+								assistantMsg.content = `Issues in **${repoName}**:\n\n${summary}${json.total > 10 ? `\n\n... and ${json.total - 10} more` : ''}`;
+							}
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						} else if (resp.status === 401) {
+							assistantMsg.content = json.message || "GitHub not configured.";
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						} else if (resp.status === 403 && json.blocked) {
+							assistantMsg.content = json.message || "GitHub usage limit exceeded.";
+							assistantMsg.status = "complete";
+							set({ conversations: [...getState().conversations] });
+							await setDb(CONV_KEY, getState().conversations);
+							return;
+						}
+					} catch {}
+			}
+		}
+		
+		// GitHub: Verify commit message against code changes
+		if (getState().activeTools?.["github_list_repos"] && getState().activeTools?.["github_commits"] && getState().activeTools?.["github_commit_details"]) {
+			// Match: "verify commit message/comment", "check if commit aligns", "show what changed"
+			const hasVerifyAction = /\b(?:verify|check|validate|show|review|compare)\b/i.test(content);
+			const hasCommitReference = /\b(?:commit|changelist)\b/i.test(content);
+			const hasMessageOrComment = /\b(?:message|comment|description)\b/i.test(content);
+			const hasAlignmentConcern = /\b(?:align(?:ed)?|match(?:es)?|correspond(?:s)?|against|with)\b.*\b(?:code|changes?|changelist|delivered)/i.test(content) ||
+			                           /\b(?:code|changes?|changelist|delivered)\b.*\b(?:align(?:ed)?|match(?:es)?|correspond(?:s)?)/i.test(content);
+			
+			const verifyCommitQuery = hasVerifyAction && hasCommitReference && (hasMessageOrComment || hasAlignmentConcern);
+			
+			if (verifyCommitQuery) {
+				try {
+					assistantMsg.status = "streaming";
+					set({ conversations: [...getState().conversations] });
+					
+					// Fetch all repos to get the most recent one
+					const repoResp = await fetch("http://localhost:3001/mcp/tools/github/repos", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({}),
+					});
+					const repoJson = await repoResp.json();
+					
+					if (repoResp.ok && repoJson?.ok && repoJson.repositories && repoJson.repositories.length > 0) {
+						const mostRecentRepo = repoJson.repositories[0];
+						
+						// Fetch the latest commit
+						const commitResp = await fetch("http://localhost:3001/mcp/tools/github/commits", {
+							method: "POST",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({ repo: mostRecentRepo.name, limit: 1 }),
+						});
+						const commitJson = await commitResp.json();
+						
+						if (commitResp.ok && commitJson?.ok && commitJson.commits && commitJson.commits.length > 0) {
+							const latestCommit = commitJson.commits[0];
+							
+							// Fetch detailed commit info including files changed
+							const detailResp = await fetch("http://localhost:3001/mcp/tools/github/commit-details", {
+								method: "POST",
+								headers: { "Content-Type": "application/json" },
+								body: JSON.stringify({ 
+									repo: mostRecentRepo.name,
+									sha: latestCommit.full_sha 
+								}),
+							});
+							const detailJson = await detailResp.json();
+							
+							if (detailResp.ok && detailJson?.ok && detailJson.commit) {
+								const commit = detailJson.commit;
+								const files = commit.files || [];
+								
+								// Build a summary of changes
+								let filesSummary = files.slice(0, 10).map((f: any) => 
+									`- **${f.filename}** (${f.status})\n  +${f.additions} -${f.deletions} (${f.changes} changes)`
+								).join("\n");
+								
+								if (files.length > 10) {
+									filesSummary += `\n... and ${files.length - 10} more files`;
+								}
+								
+								assistantMsg.content = `## Latest Commit Verification\n\n` +
+									`**Repository:** ${mostRecentRepo.name}\n` +
+									`**Commit:** \`${commit.sha}\`\n` +
+									`**Author:** ${commit.author.name} (${commit.author.email})\n` +
+									`**Date:** ${new Date(commit.author.date).toLocaleString()}\n\n` +
+									`---\n\n` +
+									`### 📝 Commit Message:\n\`\`\`\n${commit.message}\n\`\`\`\n\n` +
+									`---\n\n` +
+									`### 📊 Code Changes:\n` +
+									`**Total:** ${commit.stats?.additions || 0} additions, ${commit.stats?.deletions || 0} deletions across ${files.length} file(s)\n\n` +
+									`**Files Modified:**\n${filesSummary || 'No file changes detected'}\n\n` +
+									`---\n\n` +
+									`**✅ Review the commit message against the files changed above to verify alignment.**\n\n` +
+									`[View full commit on GitHub](${commit.url})`;
+								
+								assistantMsg.status = "complete";
+								set({ conversations: [...getState().conversations] });
+								await setDb(CONV_KEY, getState().conversations);
+								return;
+							}
+						}
+					}
+					
+					// Fallback if something fails
+					assistantMsg.content = "Unable to fetch commit details for verification. Please ensure GitHub is properly configured.";
+					assistantMsg.status = "complete";
+					set({ conversations: [...getState().conversations] });
+					await setDb(CONV_KEY, getState().conversations);
+					return;
+				} catch (error) {
+					console.error("[Verify Commit]", error);
+				}
+			}
+		}
+		
+		// Add a transient system instruction to reply in the detected language
 			const langInstruction = replyLang === "fr" ? "Veuillez répondre en français." : "Please reply in English.";
 			const baseHistory = conv.messages.map(m => ({
 					role: m.role,
