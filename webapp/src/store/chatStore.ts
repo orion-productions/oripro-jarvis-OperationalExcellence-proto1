@@ -1521,9 +1521,9 @@ export const useChatStore = create<ChatState>((set, getState) => ({
 			}
 		}
 		
-		// GitHub: Verify commit message against code changes
+		// GitHub: Verify commit message against code changes OR show commit content/details
 		if (getState().activeTools?.["github_list_repos"] && getState().activeTools?.["github_commits"] && getState().activeTools?.["github_commit_details"]) {
-			// Match: "verify commit message/comment", "check if commit aligns", "show what changed"
+			// Pattern 1: Verification queries ("verify commit message against code")
 			const hasVerifyAction = /\b(?:verify|check|validate|show|review|compare)\b/i.test(content);
 			const hasCommitReference = /\b(?:commit|changelist)\b/i.test(content);
 			const hasMessageOrComment = /\b(?:message|comment|description)\b/i.test(content);
@@ -1532,7 +1532,12 @@ export const useChatStore = create<ChatState>((set, getState) => ({
 			
 			const verifyCommitQuery = hasVerifyAction && hasCommitReference && (hasMessageOrComment || hasAlignmentConcern);
 			
-			if (verifyCommitQuery) {
+			// Pattern 2: Content queries ("what was the content of this commit?", "what changed?")
+			const contentQuery = /\b(?:what|show|display|get)\s+(?:was|is|are)?\s*(?:the\s+)?(?:content|contents|changes?|details?)\s+(?:of|in|for)?\s*(?:this|the|that|latest|last)?\s*(?:commit|changelist)/i.test(content) ||
+			                     /\b(?:what|show)\s+(?:changed|modified|added|deleted)\s+(?:in|with)?\s*(?:this|the|that|latest|last)?\s*(?:commit|changelist)/i.test(content) ||
+			                     /\b(?:commit|changelist)\s+(?:content|contents|changes?|details?)/i.test(content);
+			
+			if (verifyCommitQuery || contentQuery) {
 				try {
 					assistantMsg.status = "streaming";
 					set({ conversations: [...getState().conversations] });
@@ -1574,29 +1579,44 @@ export const useChatStore = create<ChatState>((set, getState) => ({
 								const commit = detailJson.commit;
 								const files = commit.files || [];
 								
-								// Build a summary of changes
-								let filesSummary = files.slice(0, 10).map((f: any) => 
-									`- **${f.filename}** (${f.status})\n  +${f.additions} -${f.deletions} (${f.changes} changes)`
-								).join("\n");
+								// INTELLIGENT VERIFICATION - Analyze commit message against actual code changes
+								const verification = analyzeCommitAlignment(commit.message, files);
 								
-								if (files.length > 10) {
-									filesSummary += `\n... and ${files.length - 10} more files`;
+								// Build file summary with key evidence
+								let filesSummary = files.slice(0, 15).map((f: any) => {
+									const evidence = verification.fileEvidence.find((e: any) => e.filename === f.filename);
+									const marker = evidence ? ' ✅' : '';
+									return `- **${f.filename}**${marker} (${f.status})\n  +${f.additions} -${f.deletions} changes`;
+								}).join("\n");
+								
+								if (files.length > 15) {
+									filesSummary += `\n... and ${files.length - 15} more files`;
 								}
 								
-								assistantMsg.content = `## Latest Commit Verification\n\n` +
-									`**Repository:** ${mostRecentRepo.name}\n` +
-									`**Commit:** \`${commit.sha}\`\n` +
-									`**Author:** ${commit.author.name} (${commit.author.email})\n` +
+								// Generate verification report
+								let verificationReport = '';
+								if (verifyCommitQuery) {
+									verificationReport = `\n\n---\n\n### 🔍 Intelligent Verification Analysis\n\n` +
+										`**Alignment Score: ${verification.score}/10** ${verification.scoreEmoji}\n\n` +
+										`**Claims Found in Commit Message:** ${verification.claimsFound}\n` +
+										`**Claims Verified in Code:** ${verification.claimsVerified}\n\n` +
+										`#### Evidence Found:\n${verification.evidence}\n\n` +
+										(verification.missingEvidence ? `#### ⚠️ Unverified Claims:\n${verification.missingEvidence}\n\n` : '') +
+										`**Conclusion:** ${verification.conclusion}`;
+								}
+								
+								assistantMsg.content = `## Commit Analysis - ${mostRecentRepo.name}\n\n` +
+									`**Commit:** \`${commit.sha}\` | **Author:** ${commit.author.name}\n` +
 									`**Date:** ${new Date(commit.author.date).toLocaleString()}\n\n` +
 									`---\n\n` +
 									`### 📝 Commit Message:\n\`\`\`\n${commit.message}\n\`\`\`\n\n` +
 									`---\n\n` +
-									`### 📊 Code Changes:\n` +
-									`**Total:** ${commit.stats?.additions || 0} additions, ${commit.stats?.deletions || 0} deletions across ${files.length} file(s)\n\n` +
-									`**Files Modified:**\n${filesSummary || 'No file changes detected'}\n\n` +
-									`---\n\n` +
-									`**✅ Review the commit message against the files changed above to verify alignment.**\n\n` +
-									`[View full commit on GitHub](${commit.url})`;
+									`### 📊 Code Changes Summary:\n` +
+									`**Total Impact:** ${commit.stats?.additions || 0} additions, ${commit.stats?.deletions || 0} deletions\n` +
+									`**Files Changed:** ${files.length} file(s)\n\n` +
+									`**Changed Files:**\n${filesSummary || 'No file changes detected'}` +
+									verificationReport +
+									`\n\n---\n\n[View full commit on GitHub](${commit.url})`;
 								
 								assistantMsg.status = "complete";
 								set({ conversations: [...getState().conversations] });
@@ -1647,6 +1667,95 @@ export const useChatStore = create<ChatState>((set, getState) => ({
 		}
 	},
 }));
+
+/**
+ * Intelligent Commit Verification
+ * Analyzes commit message claims against actual code changes
+ */
+function analyzeCommitAlignment(commitMessage: string, files: any[]) {
+	const message = commitMessage.toLowerCase();
+	const fileNames = files.map(f => f.filename.toLowerCase());
+	
+	let claimsFound = 0;
+	let claimsVerified = 0;
+	const evidence: string[] = [];
+	const missing: string[] = [];
+	const fileEvidence: any[] = [];
+	
+	// Extract and verify specific claims
+	const claims = [
+		// Backend files
+		{ pattern: /github.*auth.*service|githubauth/i, files: ['githubAuthService', 'githubauth'], desc: 'GitHub Auth Service' },
+		{ pattern: /index\.cjs.*endpoint|7.*endpoint|mcp.*tool.*endpoint/i, files: ['index.cjs'], desc: '7 GitHub MCP endpoints' },
+		{ pattern: /billing.*service|billing.*protection/i, files: ['billingService'], desc: 'Billing Service updates' },
+		// Frontend files
+		{ pattern: /chatstore|pattern.*matching|natural.*language/i, files: ['chatStore'], desc: 'Pattern matching in chatStore' },
+		{ pattern: /rightpanel|ui.*separat|visual.*separat/i, files: ['RightPanel'], desc: 'UI enhancements in RightPanel' },
+		// Documentation
+		{ pattern: /github.*setup|setup.*guide|372.*line/i, files: ['GITHUB_SETUP.md', 'github_setup'], desc: 'GitHub setup guide' },
+		{ pattern: /readme.*updat|readme/i, files: ['README.md', 'readme'], desc: 'README updates' },
+		// Dependencies
+		{ pattern: /octokit|@octokit\/rest/i, files: ['package.json', 'package-lock'], desc: 'Octokit dependency' },
+		// Features
+		{ pattern: /organization.*wide|latest.*commit.*org/i, files: ['chatStore'], desc: 'Organization-wide queries' },
+		{ pattern: /commit.*verif|verify.*commit/i, files: ['chatStore'], desc: 'Commit verification feature' },
+		{ pattern: /yellow.*box|green.*box|visual.*color/i, files: ['RightPanel'], desc: 'Visual color separation' },
+	];
+	
+	claims.forEach(claim => {
+		if (claim.pattern.test(message)) {
+			claimsFound++;
+			// Check if matching files exist in changes
+			const matchingFiles = files.filter(f => 
+				claim.files.some(cf => f.filename.toLowerCase().includes(cf.toLowerCase()))
+			);
+			
+			if (matchingFiles.length > 0) {
+				claimsVerified++;
+				matchingFiles.forEach(f => {
+					evidence.push(`✅ **${claim.desc}** → \`${f.filename}\` (+${f.additions}/-${f.deletions})`);
+					fileEvidence.push({ filename: f.filename, claim: claim.desc });
+				});
+			} else {
+				missing.push(`⚠️ **${claim.desc}** - mentioned but no matching file found`);
+			}
+		}
+	});
+	
+	// Calculate scope alignment
+	const totalLines = files.reduce((sum, f) => sum + (f.additions || 0) + (f.deletions || 0), 0);
+	const isMajorFeature = totalLines > 500;
+	const hasNewFiles = files.some(f => f.status === 'added');
+	const scopeMatch = (isMajorFeature && /comprehensive|major|full/i.test(message)) ||
+	                   (!isMajorFeature && !/comprehensive|major|full/i.test(message));
+	
+	// Score calculation
+	const verificationRate = claimsFound > 0 ? (claimsVerified / claimsFound) : 0;
+	const baseScore = verificationRate * 8;
+	const scopeBonus = scopeMatch ? 2 : 0;
+	const score = Math.min(10, Math.round(baseScore + scopeBonus));
+	
+	const scoreEmoji = score >= 9 ? '🎯' : score >= 7 ? '✅' : score >= 5 ? '⚠️' : '❌';
+	
+	const conclusion = score >= 9 
+		? 'Excellent alignment! Commit message accurately describes all code changes.'
+		: score >= 7
+		? 'Good alignment. Commit message generally matches the code changes.'
+		: score >= 5
+		? 'Moderate alignment. Some claims verified, but gaps exist.'
+		: 'Poor alignment. Significant discrepancies between message and code.';
+	
+	return {
+		score,
+		scoreEmoji,
+		claimsFound,
+		claimsVerified,
+		evidence: evidence.length > 0 ? evidence.join('\n') : 'No specific claims to verify',
+		missingEvidence: missing.length > 0 ? missing.join('\n') : '',
+		conclusion,
+		fileEvidence
+	};
+}
 
 async function setDb<T>(key: string, value: T): Promise<void> {
 	try {

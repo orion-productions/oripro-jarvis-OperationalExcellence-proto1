@@ -1715,7 +1715,8 @@ app.post("/mcp/tools/github/commit-details", async (req, res) => {
 					status: f.status,
 					additions: f.additions,
 					deletions: f.deletions,
-					changes: f.changes
+					changes: f.changes,
+					patch: f.patch // Include the actual code diff
 				})),
 				url: commit.html_url
 			},
