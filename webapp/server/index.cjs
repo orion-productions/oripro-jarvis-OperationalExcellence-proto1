@@ -370,6 +370,34 @@ const MCP_TOOLS = [
 			required: ["repo"],
 		},
 	},
+	// Jira-GitHub Integration Tools
+	{
+		name: "jira_github_verify_alignment",
+		title: "Jira-GitHub: Verify task alignment with code",
+		inputSchema: {
+			type: "object",
+			properties: {
+				repo: { 
+					type: "string", 
+					description: "GitHub repository name (e.g., oripro-jarvis-OperationalExcellence-proto1)" 
+				},
+				project: { 
+					type: "string", 
+					description: "Jira project key (e.g., SCRUM) or space name (optional)" 
+				},
+				statuses: { 
+					type: "array", 
+					items: { type: "string" },
+					description: "Filter by Jira statuses (e.g., ['Done', 'In Progress']) - optional" 
+				},
+				maxTasks: { 
+					type: "number", 
+					description: "Maximum tasks to analyze (default: 50)" 
+				}
+			},
+			required: ["repo"],
+		},
+	},
 ];
 
 app.get("/mcp/tools", (req, res) => {
@@ -1875,6 +1903,596 @@ app.post("/mcp/tools/github/issues", async (req, res) => {
 		});
 	} catch (error) {
 		console.error("[GitHub Issues]", error.message);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// ============================================================================
+// JIRA-GITHUB ALIGNMENT VERIFICATION
+// ============================================================================
+
+// Jira-GitHub: Verify task alignment with code
+app.post("/mcp/tools/jira-github/verify-alignment", async (req, res) => {
+	try {
+		let { repo, project, statuses, maxTasks = 100 } = req.body; // Increased default to 100
+		
+		if (!repo) {
+			return res.status(400).json({ ok: false, error: "Repository name is required" });
+		}
+
+		// Check authentication for both services
+		const auth = jiraAuthHeader();
+		if (!auth) {
+			return res.status(400).json({ ok: false, error: "Jira is not configured" });
+		}
+
+		if (!githubAuth.isAuthenticated()) {
+			return res.status(401).json({
+				ok: false,
+				error: "Not authenticated",
+				message: "GitHub token not configured"
+			});
+		}
+
+		// Check rate limits
+		const githubCheck = await billingService.checkAndUpdateUsage('github', 'search');
+		if (!githubCheck.allowed) {
+			return res.status(403).json({
+				ok: false,
+				blocked: true,
+				message: githubCheck.message
+			});
+		}
+
+		// Normalize project key (uppercase, remove common prefixes)
+		if (project) {
+			project = project.toUpperCase().replace(/^(PROJECT|SPACE)-?/i, '');
+		}
+		
+		console.log(`[Jira-GitHub Alignment] Starting verification for repo: ${repo}, project: ${project || 'all'}`);
+
+		// Step 1: Fetch Jira tasks
+		let jiraTasks = [];
+		let actualProjectKey = project;
+		
+		// First, resolve space name to project key if needed
+		if (project) {
+			const projectsResp = await fetch(`${JIRA_BASE_URL.replace(/\/+$/, "")}/rest/api/3/project/search`, {
+				headers: { "Authorization": auth, "Accept": "application/json" }
+			});
+			
+			if (projectsResp.ok) {
+				const projectsData = await projectsResp.json();
+				const projects = projectsData.values || [];
+				
+				// Try to find project by key first
+				let foundProject = projects.find(p => p.key.toUpperCase() === project.toUpperCase());
+				
+				// If not found by key, try to find by name (for space names)
+				if (!foundProject) {
+					foundProject = projects.find(p => 
+						p.name.toUpperCase() === project.toUpperCase() ||
+						p.name.toUpperCase().includes(project.toUpperCase())
+					);
+				}
+				
+				if (foundProject) {
+					actualProjectKey = foundProject.key;
+					console.log(`[Jira-GitHub Alignment] Resolved "${project}" to project key: ${actualProjectKey}`);
+				} else {
+					console.warn(`[Jira-GitHub Alignment] Project/space "${project}" not found, trying as project key`);
+				}
+			}
+		}
+		
+		if (actualProjectKey) {
+			// Use board API to get issues (more reliable than search API)
+			try {
+				// First, get boards for the project
+				const boardsUrl = `${JIRA_BASE_URL.replace(/\/+$/, "")}/rest/agile/1.0/board?projectKeyOrId=${actualProjectKey}`;
+				const boardsResp = await fetch(boardsUrl, {
+					headers: { "Authorization": auth, "Accept": "application/json" }
+				});
+				
+				if (boardsResp.ok) {
+					const boardsData = await boardsResp.json();
+					const boards = boardsData.values || [];
+					
+					// Get issues from all boards with pagination
+					for (const board of boards) {
+						let startAt = 0;
+						const pageSize = 50;
+						let hasMore = true;
+						
+						// Paginate through all issues in the board
+						while (hasMore && jiraTasks.length < maxTasks) {
+							const issuesUrl = `${JIRA_BASE_URL.replace(/\/+$/, "")}/rest/agile/1.0/board/${board.id}/issue?startAt=${startAt}&maxResults=${pageSize}`;
+							const issuesResp = await fetch(issuesUrl, {
+								headers: { "Authorization": auth, "Accept": "application/json" }
+							});
+							
+							if (issuesResp.ok) {
+								const issuesData = await issuesResp.json();
+								const issues = issuesData.issues || [];
+								
+								if (issues.length === 0) {
+									hasMore = false;
+									break;
+								}
+								
+								// Convert agile API format to standard format
+								for (const issue of issues) {
+									// Filter by status if specified
+									const issueStatus = issue.fields?.status?.name || '';
+									if (statuses && statuses.length > 0) {
+										if (!statuses.some(s => issueStatus.toLowerCase().includes(s.toLowerCase()))) {
+											continue;
+										}
+									}
+									
+									jiraTasks.push({
+										key: issue.key,
+										fields: {
+											summary: issue.fields?.summary || '',
+											status: issue.fields?.status || {},
+											assignee: issue.fields?.assignee || null,
+											labels: issue.fields?.labels || [],
+											created: issue.fields?.created || '',
+											updated: issue.fields?.updated || ''
+										}
+									});
+									
+									if (jiraTasks.length >= maxTasks) break;
+								}
+								
+								// Check if there are more pages
+								hasMore = issues.length === pageSize && jiraTasks.length < maxTasks;
+								startAt += pageSize;
+							} else {
+								hasMore = false;
+							}
+							
+							if (jiraTasks.length >= maxTasks) break;
+						}
+						
+						if (jiraTasks.length >= maxTasks) break;
+					}
+				}
+				
+				// If board API didn't work, fallback to search API
+				if (jiraTasks.length === 0) {
+					console.log(`[Jira-GitHub Alignment] Board API returned no results, trying search API...`);
+					const jql = statuses && statuses.length > 0
+						? `project = ${actualProjectKey} AND status IN (${statuses.map(s => `"${s}"`).join(', ')})`
+						: `project = ${actualProjectKey}`;
+					
+					const searchUrl = `${JIRA_BASE_URL.replace(/\/+$/, "")}/rest/api/2/search?${new URLSearchParams({
+						jql: jql,
+						maxResults: String(maxTasks),
+						fields: "summary,status,assignee,labels,key,created,updated"
+					}).toString()}`;
+					
+					const searchResp = await fetch(searchUrl, {
+						headers: { "Authorization": auth, "Accept": "application/json" }
+					});
+					
+					if (searchResp.ok) {
+						const searchData = await searchResp.json();
+						jiraTasks = searchData.issues || [];
+					}
+				}
+			} catch (error) {
+				console.error(`[Jira-GitHub Alignment] Error fetching tasks via board API:`, error.message);
+				// Continue with fallback
+			}
+		} else {
+			// Get all projects and fetch issues using board API
+			const projectsResp = await fetch(`${JIRA_BASE_URL.replace(/\/+$/, "")}/rest/api/3/project/search`, {
+				headers: { "Authorization": auth, "Accept": "application/json" }
+			});
+			
+			if (projectsResp.ok) {
+				const projectsData = await projectsResp.json();
+				const projects = projectsData.values || [];
+				
+				console.log(`[Jira-GitHub Alignment] Fetching tasks from ${projects.length} projects using board API`);
+				
+				// Fetch issues from all projects using board API (more reliable)
+				for (const proj of projects) { // Process all projects
+					try {
+						// Get boards for this project
+						const boardsUrl = `${JIRA_BASE_URL.replace(/\/+$/, "")}/rest/agile/1.0/board?projectKeyOrId=${proj.key}`;
+						const boardsResp = await fetch(boardsUrl, {
+							headers: { "Authorization": auth, "Accept": "application/json" }
+						});
+						
+						if (boardsResp.ok) {
+							const boardsData = await boardsResp.json();
+							const boards = boardsData.values || [];
+							
+							// Get issues from all boards for this project
+							for (const board of boards) {
+								let startAt = 0;
+								const pageSize = 50;
+								let hasMore = true;
+								
+								// Paginate through all issues in the board
+								while (hasMore && jiraTasks.length < maxTasks) {
+									const issuesUrl = `${JIRA_BASE_URL.replace(/\/+$/, "")}/rest/agile/1.0/board/${board.id}/issue?startAt=${startAt}&maxResults=${pageSize}`;
+									const issuesResp = await fetch(issuesUrl, {
+										headers: { "Authorization": auth, "Accept": "application/json" }
+									});
+									
+									if (issuesResp.ok) {
+										const issuesData = await issuesResp.json();
+										const issues = issuesData.issues || [];
+										
+										if (issues.length === 0) {
+											hasMore = false;
+											break;
+										}
+										
+										// Filter by status if specified
+										for (const issue of issues) {
+											const issueStatus = issue.fields?.status?.name || '';
+											if (statuses && statuses.length > 0) {
+												if (!statuses.some(s => issueStatus.toLowerCase().includes(s.toLowerCase()))) {
+													continue;
+												}
+											}
+											
+											// Convert agile API format to standard format
+											jiraTasks.push({
+												key: issue.key,
+												fields: {
+													summary: issue.fields?.summary || '',
+													status: issue.fields?.status || {},
+													assignee: issue.fields?.assignee || null,
+													labels: issue.fields?.labels || [],
+													created: issue.fields?.created || '',
+													updated: issue.fields?.updated || ''
+												}
+											});
+											
+											if (jiraTasks.length >= maxTasks) break;
+										}
+										
+										// Check if there are more pages
+										hasMore = issues.length === pageSize && jiraTasks.length < maxTasks;
+										startAt += pageSize;
+									} else {
+										hasMore = false;
+									}
+									
+									if (jiraTasks.length >= maxTasks) break;
+								}
+								
+								if (jiraTasks.length >= maxTasks) break;
+							}
+						}
+					} catch (error) {
+						console.warn(`[Jira-GitHub Alignment] Error fetching tasks for project ${proj.key}:`, error.message);
+					}
+					
+					if (jiraTasks.length >= maxTasks) break;
+				}
+				
+				console.log(`[Jira-GitHub Alignment] Fetched ${jiraTasks.length} tasks from all projects`);
+			}
+		}
+
+		if (jiraTasks.length === 0) {
+			return res.json({
+				ok: true,
+				repository: repo,
+				project: actualProjectKey || project || 'all',
+				originalProject: project || null,
+				tasksAnalyzed: 0,
+				aligned: [],
+				misalignments: [],
+				summary: `No Jira tasks found matching the criteria.${actualProjectKey && actualProjectKey !== project ? ` (Resolved "${project}" to "${actualProjectKey}")` : ''}`
+			});
+		}
+
+		console.log(`[Jira-GitHub Alignment] Found ${jiraTasks.length} Jira tasks to analyze`);
+		console.log(`[Jira-GitHub Alignment] Task keys: ${jiraTasks.map(t => t.key).join(', ')}`);
+		const taskKeys = jiraTasks.map(t => t.key).sort();
+		console.log(`[Jira-GitHub Alignment] Task keys: ${taskKeys.join(', ')}`);
+
+		// Step 2: For each task, search GitHub for evidence
+		const aligned = [];
+		const misalignments = [];
+
+		// Fetch recent commits for the repository
+		let allCommits = [];
+		try {
+			const commits = await githubAuth.listCommits(repo, { perPage: 100 });
+			allCommits = commits || [];
+		} catch (error) {
+			console.warn(`[Jira-GitHub Alignment] Could not fetch commits: ${error.message}`);
+		}
+
+		// Fetch PRs
+		let allPRs = [];
+		try {
+			const prs = await githubAuth.listPullRequests(repo, { state: 'all', perPage: 50 });
+			allPRs = prs || [];
+		} catch (error) {
+			console.warn(`[Jira-GitHub Alignment] Could not fetch PRs: ${error.message}`);
+		}
+
+		// Fetch branches
+		let allBranches = [];
+		try {
+			const branches = await githubAuth.listBranches(repo);
+			allBranches = branches || [];
+		} catch (error) {
+			console.warn(`[Jira-GitHub Alignment] Could not fetch branches: ${error.message}`);
+		}
+
+		// Analyze all tasks (don't limit here - we already limited during fetch)
+		for (const task of jiraTasks) {
+			const taskKey = task.key; // e.g., "ROC-5"
+			const taskStatus = task.fields?.status?.name || 'Unknown';
+			const taskSummary = task.fields?.summary || 'No summary';
+			
+			// Extract keywords from task summary for broader search
+			const stopWords = ['the', 'and', 'or', 'for', 'with', 'that', 'this', 'can', 'you', 'ask', 'way', 'called', 'on', 'in', 'to', 'a', 'an'];
+			const summaryWords = taskSummary.toLowerCase()
+				.split(/[\s,.'"()]+/)
+				.filter(word => word.length >= 3 && !stopWords.includes(word)) // Words 3+ chars, not stop words
+				.filter((word, index, arr) => arr.indexOf(word) === index) // Remove duplicates
+				.slice(0, 8); // Limit to 8 keywords
+			
+			console.log(`[Jira-GitHub Alignment] Task ${taskKey}: Extracted keywords: ${summaryWords.join(', ')}`);
+			
+			// Search for task key in various places
+			const evidence = {
+				commits: [],
+				prs: [],
+				branches: [],
+				codeMatches: []
+			};
+
+			// Search commits - multiple strategies
+			const commitMatches = allCommits.filter(commit => {
+				const message = (commit.commit?.message || '').toLowerCase();
+				const fullMessage = message;
+				
+				// Strategy 1: Exact task key match
+				if (message.includes(taskKey.toLowerCase()) || 
+				    message.includes(taskKey.replace('-', '').toLowerCase()) ||
+				    message.includes(taskKey.replace('-', ' ').toLowerCase())) {
+					return true;
+				}
+				
+				// Strategy 2: Keywords from task summary (for tasks that don't mention key in commits)
+				const keywordMatches = summaryWords.filter(keyword => 
+					fullMessage.includes(keyword)
+				).length;
+				
+				// If 2+ keywords match, likely related
+				if (keywordMatches >= 2) {
+					return true;
+				}
+				
+				// Strategy 3: Check for common patterns like "verify commit", "commit verification", etc.
+				const taskKeyLower = taskKey.toLowerCase();
+				if (taskKeyLower.includes('roc-5') || taskKeyLower.includes('roc-6')) {
+					// For ROC-5/ROC-6, look for commit verification keywords
+					const verificationKeywords = ['verify', 'commit', 'alignment', 'changelist', 'code', 'delivered'];
+					const keywordCount = verificationKeywords.filter(kw => fullMessage.includes(kw)).length;
+					if (keywordCount >= 2) {
+						return true;
+					}
+				}
+				
+				return false;
+			});
+			evidence.commits = commitMatches.slice(0, 5).map(c => ({
+				sha: c.sha.substring(0, 7),
+				message: c.commit.message.split('\n')[0],
+				date: c.commit.author.date,
+				url: c.html_url
+			}));
+			
+			// Log evidence found for debugging
+			if (commitMatches.length > 0) {
+				console.log(`[Jira-GitHub Alignment] Task ${taskKey}: Found ${commitMatches.length} commit(s) - ${commitMatches.slice(0, 2).map(c => c.sha.substring(0, 7)).join(', ')}`);
+			}
+
+			// Search PRs - also use keywords
+			const prMatches = allPRs.filter(pr => {
+				const title = (pr.title || '').toLowerCase();
+				const body = (pr.body || '').toLowerCase();
+				const combined = `${title} ${body}`;
+				
+				// Strategy 1: Task key
+				if (title.includes(taskKey.toLowerCase()) || 
+				    body.includes(taskKey.toLowerCase())) {
+					return true;
+				}
+				
+				// Strategy 2: Keywords from summary
+				const keywordMatches = summaryWords.filter(keyword => 
+					combined.includes(keyword)
+				).length;
+				
+				return keywordMatches >= 2;
+			});
+			evidence.prs = prMatches.slice(0, 5).map(pr => ({
+				number: pr.number,
+				title: pr.title,
+				state: pr.state,
+				url: pr.html_url
+			}));
+
+			// Search branches
+			const branchMatches = allBranches.filter(branch => {
+				const name = branch.name.toLowerCase();
+				return name.includes(taskKey.toLowerCase()) || 
+				       name.includes(taskKey.replace('-', '').toLowerCase());
+			});
+			evidence.branches = branchMatches.map(b => b.name);
+
+			// Search code (limited to avoid too many API calls)
+			// Try multiple search terms: task key and keywords
+			try {
+				const searchTerms = [taskKey, ...summaryWords.slice(0, 2)].filter(Boolean);
+				for (const term of searchTerms.slice(0, 2)) { // Limit to 2 searches per task
+					try {
+						const codeResults = await githubAuth.searchCode(term, { perPage: 3 });
+						if (codeResults.items && codeResults.items.length > 0) {
+							evidence.codeMatches.push(...codeResults.items.slice(0, 3).map(item => ({
+								path: item.path,
+								repository: item.repository.name,
+								url: item.html_url
+							})));
+							break; // Found results, no need to search more
+						}
+					} catch (error) {
+						// Continue to next search term
+					}
+				}
+				// Deduplicate
+				evidence.codeMatches = evidence.codeMatches.filter((item, index, self) =>
+					index === self.findIndex(t => t.path === item.path)
+				).slice(0, 5);
+			} catch (error) {
+				// Rate limit or other error - skip code search for this task
+			}
+
+			// Determine if evidence exists
+			const hasEvidence = evidence.commits.length > 0 || 
+			                   evidence.prs.length > 0 || 
+			                   evidence.branches.length > 0 || 
+			                   evidence.codeMatches.length > 0;
+
+			// Analyze alignment
+			const statusLower = taskStatus.toLowerCase();
+			const isDone = statusLower.includes('done') || statusLower.includes('closed') || statusLower.includes('resolved');
+			const isInProgress = statusLower.includes('progress') || statusLower.includes('in progress') || statusLower.includes('selected for development');
+			const isToDo = statusLower.includes('to do') || statusLower.includes('open') || statusLower.includes('backlog');
+
+			let alignment = 'aligned';
+			let warning = null;
+			let recommendation = null;
+
+			// Rule 1: DONE tasks MUST have evidence
+			if (isDone && !hasEvidence) {
+				alignment = 'misaligned';
+				warning = `Task marked as ${taskStatus} but no code evidence found`;
+				recommendation = "Verify task status or search for alternative task keys/descriptions";
+			}
+			// Rule 2: DONE tasks WITH evidence are aligned
+			else if (isDone && hasEvidence) {
+				alignment = 'aligned';
+				// No warning needed - this is correct
+			}
+			// Rule 3: IN PROGRESS tasks should have SOME evidence (commits, branches, or PRs)
+			else if (isInProgress && !hasEvidence) {
+				alignment = 'misaligned';
+				warning = `Task marked as ${taskStatus} but no code evidence found (no commits, branches, or PRs)`;
+				recommendation = "Task may not have been started yet, or evidence is in a different repository";
+			}
+			// Rule 4: IN PROGRESS tasks WITH evidence - check if it looks complete
+			else if (isInProgress && hasEvidence) {
+				// If there are commits, check if they suggest completion
+				if (evidence.commits.length > 0) {
+					const recentCommits = evidence.commits.filter(c => {
+						const commitDate = new Date(c.date);
+						const daysAgo = (Date.now() - commitDate.getTime()) / (1000 * 60 * 60 * 24);
+						return daysAgo < 30; // Check last 30 days, not just 7
+					});
+					
+					if (recentCommits.length > 0) {
+						const commitMessages = recentCommits.map(c => c.message.toLowerCase());
+						const completionKeywords = ['fix', 'complete', 'done', 'finish', 'implement', 'resolve', 'feat:', 'add', 'intelligent', 'verification'];
+						const hasCompletionKeywords = commitMessages.some(msg => 
+							completionKeywords.some(keyword => msg.includes(keyword))
+						);
+						
+						// Check if PRs are merged (strong indicator of completion)
+						const hasMergedPRs = evidence.prs.some(pr => pr.state === 'closed');
+						
+						if (hasCompletionKeywords || hasMergedPRs) {
+							alignment = 'misaligned';
+							warning = `Task IN PROGRESS but code appears complete (commits with completion keywords found${hasMergedPRs ? ', PRs merged' : ''})`;
+							recommendation = "Update Jira status to DONE";
+						} else {
+							// IN PROGRESS with evidence but not complete - this is aligned
+							alignment = 'aligned';
+						}
+					} else {
+						// IN PROGRESS with evidence but old commits - still aligned
+						alignment = 'aligned';
+					}
+				} else {
+					// IN PROGRESS with evidence (branches/PRs but no commits yet) - aligned
+					alignment = 'aligned';
+				}
+			}
+			// Rule 5: IN PROGRESS with no evidence - already handled above as misaligned
+			// Rule 6: TO DO tasks with evidence are misaligned
+			else if (isToDo && hasEvidence) {
+				alignment = 'misaligned';
+				warning = `Task TO DO but code already exists`;
+				recommendation = "Update Jira status to IN PROGRESS or DONE";
+			}
+			// Rule 7: TO DO with no evidence - aligned (not started yet)
+			else if (isToDo && !hasEvidence) {
+				alignment = 'aligned';
+			}
+
+			const taskResult = {
+				key: taskKey,
+				summary: taskSummary,
+				status: taskStatus,
+				assignee: task.fields?.assignee?.displayName || 'Unassigned',
+				evidence: {
+					commits: evidence.commits.length,
+					prs: evidence.prs.length,
+					branches: evidence.branches.length,
+					codeMatches: evidence.codeMatches.length,
+					total: evidence.commits.length + evidence.prs.length + evidence.branches.length + evidence.codeMatches.length
+				},
+				evidenceDetails: evidence,
+				alignment,
+				warning,
+				recommendation
+			};
+
+			if (alignment === 'aligned') {
+				aligned.push(taskResult);
+			} else {
+				misalignments.push(taskResult);
+			}
+		}
+
+		// Calculate alignment score
+		const totalTasks = jiraTasks.length;
+		const alignedCount = aligned.length;
+		const alignmentScore = totalTasks > 0 ? Math.round((alignedCount / totalTasks) * 100) : 0;
+
+		// Log all task keys for debugging
+		const allTaskKeys = [...aligned, ...misalignments].map(t => t.key).sort();
+		console.log(`[Jira-GitHub Alignment] All analyzed tasks: ${allTaskKeys.join(', ')}`);
+		
+		res.json({
+			ok: true,
+			repository: repo,
+			project: actualProjectKey || project || 'all',
+			originalProject: project && actualProjectKey !== project ? project : null,
+			tasksAnalyzed: totalTasks,
+			alignmentScore,
+			aligned: aligned, // Return all aligned tasks
+			misalignments: misalignments, // Return all misaligned tasks
+			summary: `${alignedCount}/${totalTasks} tasks aligned (${alignmentScore}%). ${misalignments.length} misalignment(s) found.${actualProjectKey && actualProjectKey !== project ? ` (Resolved "${project}" to "${actualProjectKey}")` : ''}`,
+			warning: githubCheck.warning
+		});
+
+	} catch (error) {
+		console.error("[Jira-GitHub Alignment]", error.message);
 		res.status(500).json({ ok: false, error: error.message });
 	}
 });

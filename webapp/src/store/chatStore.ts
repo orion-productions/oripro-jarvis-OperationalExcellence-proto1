@@ -103,6 +103,8 @@ const DEFAULT_ACTIVE_TOOLS: Record<string, boolean> = {
 	github_search_code: true,
 	github_pull_requests: true,
 	github_issues: true,
+	// Enable Jira-GitHub integration tools
+	jira_github_verify_alignment: true,
 	// Other sample tools
 	add: true,
 	weather: true,
@@ -1521,6 +1523,234 @@ export const useChatStore = create<ChatState>((set, getState) => ({
 			}
 		}
 		
+		// Jira-GitHub: Verify task alignment with code
+		if (getState().activeTools?.["jira_github_verify_alignment"]) {
+			// More flexible keyword detection
+			const hasJiraReference = /\bjira\s+tasks?/i.test(content);
+			const hasGithubReference = /\bgithub|code\s+on\s+github/i.test(content);
+			const hasVerifyAction = /\b(?:verify|check|align|alignment|up\s+to\s+date|find\s+proof)/i.test(content);
+			
+			// Extract repository name (more flexible patterns)
+			let repoName = null;
+			const repoPatterns = [
+				// Exact pattern: "on repository X" or "on repo X"
+				/\bon\s+(?:repository|repo)\s+['"]?([a-zA-Z0-9_.-]+)['"]?/i,
+				// Pattern: "repository X" or "repo X" (but not if followed by common words)
+				/\b(?:repository|repo)\s+['"]?([a-zA-Z0-9_.-]+)['"]?(?:\s|$|,|\.)/i,
+				// Pattern: "github on repository X"
+				/\bgithub\s+on\s+(?:repository|repo)\s+['"]?([a-zA-Z0-9_.-]+)['"]?/i,
+				// Pattern: "code on github on repository X"
+				/\bcode\s+on\s+github\s+on\s+(?:repository|repo)\s+['"]?([a-zA-Z0-9_.-]+)['"]?/i,
+				// Pattern: "github repository X" or "github repo X"
+				/\bgithub\s+(?:repository|repo)\s+['"]?([a-zA-Z0-9_.-]+)['"]?/i,
+				// Pattern: "github X" but exclude common words that aren't repo names
+				/\bgithub\s+['"]?([a-zA-Z0-9_.-]{5,})['"]?(?:\s|$|,|\.)(?!.*\b(?:commits?|code|repos?|projects?)\b)/i,
+			];
+			
+			// Exclude common false positives
+			const falsePositives = ['commits', 'commit', 'code', 'repos', 'repo', 'projects', 'project', 'github', 'jira', 'tasks', 'task'];
+			
+			for (const pattern of repoPatterns) {
+				const match = content.match(pattern);
+				if (match && match[1]) {
+					const candidate = match[1].toLowerCase();
+					// Exclude false positives
+					if (!falsePositives.includes(candidate) && candidate.length >= 3) {
+						repoName = match[1];
+						break;
+					}
+				}
+			}
+			
+			// Extract project/space name (case-insensitive, more flexible)
+			let projectKey = null;
+			const projectPatterns = [
+				// Exact pattern: "in space X" or "in project X"
+				/\bin\s+(?:space|project)\s+['"]?([A-Z0-9_-]+)['"]?/i,
+				// Pattern: "tasks in space X"
+				/\btasks?\s+in\s+(?:space|project)\s+['"]?([A-Z0-9_-]+)['"]?/i,
+				// Pattern: "jira tasks in space X"
+				/\bjira\s+tasks?\s+in\s+(?:space|project)\s+['"]?([A-Z0-9_-]+)['"]?/i,
+				// Pattern: "space X" or "project X"
+				/\b(?:space|project)\s+['"]?([A-Z0-9_-]+)['"]?/i,
+				// Pattern: "(in|for) (the) (project|space) X"
+				/\b(?:in|for)\s+(?:the\s+)?(?:project|space)\s+['"]?([A-Z0-9_-]+)['"]?/i,
+			];
+			
+			for (const pattern of projectPatterns) {
+				const match = content.match(pattern);
+				if (match && match[1]) {
+					projectKey = match[1].toUpperCase(); // Normalize to uppercase
+					break;
+				}
+			}
+			
+			// Check if this is an alignment verification query
+			const isAlignmentQuery = hasJiraReference && hasGithubReference && hasVerifyAction;
+			
+			// Also check for "based on" patterns
+			const hasBasedOnPattern = /\bbased\s+on\s+(?:code|latest|jira)/i.test(content);
+			
+			if (isAlignmentQuery || hasBasedOnPattern) {
+				try {
+					console.log("[Jira-GitHub Alignment] Pattern matched, repo:", repoName, "project:", projectKey);
+					
+					assistantMsg.status = "streaming";
+					set({ conversations: [...getState().conversations] });
+
+					// If no repo specified but we have alignment keywords, try to get latest repo
+					if (!repoName) {
+						console.log("[Jira-GitHub Alignment] No repo found, fetching latest repo...");
+						const repoResp = await fetch("http://localhost:3001/mcp/tools/github/repos", {
+							method: "POST",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({}),
+						});
+						const repoJson = await repoResp.json();
+						if (repoResp.ok && repoJson?.ok && repoJson.repositories && repoJson.repositories.length > 0) {
+							repoName = repoJson.repositories[0].name;
+							console.log("[Jira-GitHub Alignment] Using latest repo:", repoName);
+						}
+					}
+
+					if (!repoName) {
+						assistantMsg.content = "Please specify a GitHub repository name. Example: 'verify Jira tasks alignment for repository oripro-jarvis-OperationalExcellence-proto1'";
+						assistantMsg.status = "complete";
+						set({ conversations: [...getState().conversations] });
+						await setDb(CONV_KEY, getState().conversations);
+						return;
+					}
+
+					console.log("[Jira-GitHub Alignment] Calling endpoint with repo:", repoName, "project:", projectKey);
+
+					// Call the alignment verification endpoint
+					const resp = await fetch("http://localhost:3001/mcp/tools/jira-github/verify-alignment", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							repo: repoName,
+							project: projectKey || undefined,
+							maxTasks: 50
+						}),
+					});
+
+					const json = await resp.json();
+
+					if (resp.ok && json?.ok) {
+						const { tasksAnalyzed, alignmentScore, aligned, misalignments, summary } = json;
+
+						// Build detailed report
+						let report = `## Jira-GitHub Alignment Verification\n\n`;
+						report += `**Repository:** ${json.repository}\n`;
+						report += `**Project:** ${json.project}\n`;
+						report += `**Tasks Analyzed:** ${tasksAnalyzed}\n`;
+						report += `**Alignment Score:** ${alignmentScore}%\n\n`;
+						report += `---\n\n`;
+						report += `### 📊 Summary\n${summary}\n\n`;
+
+						if (aligned && aligned.length > 0) {
+							report += `### ✅ Aligned Tasks (${aligned.length})\n\n`;
+							aligned.slice(0, 10).forEach((task: any) => {
+								report += `- **${task.key}**: ${task.summary}\n`;
+								report += `  Status: ${task.status} | Evidence: ${task.evidence.total} item(s)\n`;
+								if (task.evidence.commits > 0) {
+									report += `  - ${task.evidence.commits} commit(s) found\n`;
+								}
+								if (task.evidence.prs > 0) {
+									report += `  - ${task.evidence.prs} PR(s) found\n`;
+								}
+								if (task.evidence.branches > 0) {
+									report += `  - ${task.evidence.branches} branch(es) found\n`;
+								}
+								report += `\n`;
+							});
+							if (aligned.length > 10) {
+								report += `... and ${aligned.length - 10} more aligned tasks\n\n`;
+							}
+						}
+
+						if (misalignments && misalignments.length > 0) {
+							report += `### ⚠️ Misalignments Found (${misalignments.length})\n\n`;
+							misalignments.forEach((task: any, idx: number) => {
+								report += `**${idx + 1}. ${task.key}: ${task.summary}**\n`;
+								report += `- Status: ${task.status}\n`;
+								report += `- ⚠️ **WARNING:** ${task.warning}\n`;
+								if (task.recommendation) {
+									report += `- 💡 **Recommendation:** ${task.recommendation}\n`;
+								}
+								
+								if (task.evidenceDetails) {
+									const commits = task.evidenceDetails.commits || [];
+									const prs = task.evidenceDetails.prs || [];
+									const branches = task.evidenceDetails.branches || [];
+									const codeMatches = task.evidenceDetails.codeMatches || [];
+									
+									report += `- **Evidence Searched:**\n`;
+									
+									if (commits.length > 0) {
+										report += `  - ✅ Commits (${commits.length}): ${commits.map((c: any) => `\`${c.sha.substring(0, 7)}\` - ${c.message.substring(0, 50)}${c.message.length > 50 ? '...' : ''}`).join(', ')}\n`;
+									} else {
+										report += `  - ❌ Commits: None found\n`;
+									}
+									
+									if (prs.length > 0) {
+										report += `  - ✅ PRs (${prs.length}): ${prs.map((pr: any) => `#${pr.number} (${pr.state})`).join(', ')}\n`;
+									} else {
+										report += `  - ❌ PRs: None found\n`;
+									}
+									
+									if (branches.length > 0) {
+										report += `  - ✅ Branches (${branches.length}): ${branches.join(', ')}\n`;
+									} else {
+										report += `  - ❌ Branches: None found\n`;
+									}
+									
+									if (codeMatches.length > 0) {
+										report += `  - ✅ Code Matches (${codeMatches.length}): ${codeMatches.slice(0, 3).map((m: any) => `${m.path}`).join(', ')}${codeMatches.length > 3 ? ` ... and ${codeMatches.length - 3} more` : ''}\n`;
+									} else {
+										report += `  - ❌ Code Matches: None found\n`;
+									}
+								} else {
+									report += `- **Evidence Searched:** No evidence details available\n`;
+								}
+								report += `\n`;
+							});
+						}
+
+						if (tasksAnalyzed === 0) {
+							report += `No Jira tasks found matching the criteria. Please check the project/space name or repository.`;
+						}
+
+						assistantMsg.content = report;
+						assistantMsg.status = "complete";
+						set({ conversations: [...getState().conversations] });
+						await setDb(CONV_KEY, getState().conversations);
+						return;
+					} else if (resp.status === 401) {
+						assistantMsg.content = json.message || "Jira or GitHub not configured.";
+						assistantMsg.status = "complete";
+						set({ conversations: [...getState().conversations] });
+						await setDb(CONV_KEY, getState().conversations);
+						return;
+					} else if (resp.status === 403 && json.blocked) {
+						assistantMsg.content = json.message || "Rate limit exceeded.";
+						assistantMsg.status = "complete";
+						set({ conversations: [...getState().conversations] });
+						await setDb(CONV_KEY, getState().conversations);
+						return;
+					} else {
+						assistantMsg.content = json.error || "Failed to verify alignment.";
+						assistantMsg.status = "complete";
+						set({ conversations: [...getState().conversations] });
+						await setDb(CONV_KEY, getState().conversations);
+						return;
+					}
+				} catch (error) {
+					console.error("[Jira-GitHub Alignment]", error);
+				}
+			}
+		}
+
 		// GitHub: Verify commit message against code changes OR show commit content/details
 		if (getState().activeTools?.["github_list_repos"] && getState().activeTools?.["github_commits"] && getState().activeTools?.["github_commit_details"]) {
 			// Pattern 1: Verification queries ("verify commit message against code")

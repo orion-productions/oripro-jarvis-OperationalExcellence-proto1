@@ -2,7 +2,7 @@
 
 > Your own Jarvis, specialized in Game Development, leading you to true Operational Excellence
 
-An intelligent AI assistant with **MCP (Model Context Protocol) Tools** that seamlessly integrates with your development workflow. Query your **Jira projects**, **Slack channels**, **Gmail inbox**, and **Google Calendar** using natural language - all with built-in billing protection.
+An intelligent AI assistant with **MCP (Model Context Protocol) Tools** that seamlessly integrates with your development workflow. Query your **Jira projects**, **Slack channels**, **GitHub repositories**, **Gmail inbox**, and **Google Calendar** using natural language - all with built-in billing protection and intelligent commit verification.
 
 [![GitHub](https://img.shields.io/badge/GitHub-orion--productions-blue)](https://github.com/orion-productions/oripro-jarvis-OperationalExcellence-proto1)
 
@@ -25,6 +25,15 @@ An intelligent AI assistant with **MCP (Model Context Protocol) Tools** that sea
 - ✅ Count messages from specific users
 - ✅ Example: *"What are my unread mentions?"*
 
+**GitHub** - Code Repository Management
+- ✅ List repositories and view details
+- ✅ Browse commits and view changes
+- ✅ Search code across repositories
+- ✅ List pull requests and issues
+- ✅ **Intelligent commit verification** - Automatically verify commit messages against code changes
+- ✅ Organization-wide commit queries
+- ✅ Example: *"When was latest commit?"* or *"Verify commit alignment with code"*
+
 **Gmail** (Optional) - Email Management
 - ✅ Search emails and count from senders
 - ✅ List unread and important emails
@@ -35,6 +44,27 @@ An intelligent AI assistant with **MCP (Model Context Protocol) Tools** that sea
 - ✅ View today's events
 - ✅ Check upcoming events
 - ✅ Example: *"What's on my calendar today?"*
+
+### 🔍 **Intelligent Commit Verification**
+
+**Automated Code-Level Analysis**
+- ✅ **Extracts claims** from commit messages automatically
+- ✅ **Matches claims to files** changed in the commit
+- ✅ **Calculates alignment score** (0-10) with visual indicators 🎯✅⚠️❌
+- ✅ **Generates evidence report** showing verified and unverified claims
+- ✅ **Identifies discrepancies** between commit message and actual code
+
+**Example Queries:**
+- *"Can you verify that the commit comment is aligned with the code that was delivered?"*
+- *"Verify commit alignment with changelist"*
+- *"What was the content of this commit?"*
+
+**Verification Output:**
+- Alignment score (0-10) with emoji indicators
+- Claims found vs claims verified
+- Evidence list with file markers (✅)
+- Unverified claims flagged (⚠️)
+- Intelligent conclusion about alignment quality
 
 ### 💰 **Billing Protection**
 
@@ -60,6 +90,7 @@ An intelligent AI assistant with **MCP (Model Context Protocol) Tools** that sea
 - 📊 Real-time usage indicators (💰📧📅💬)
 - 🎨 Dark/Light mode support
 - 🗂️ Conversation history management
+- 📝 **Persistent scratchpad** - Write notes, paste text, use as temporary workspace (auto-saved)
 - ⚙️ Configurable AI providers (OpenAI, Gemini, Ollama)
 
 ---
@@ -166,6 +197,19 @@ Detailed setup instructions for each service:
 "What are my unread mentions?"
 ```
 
+**GitHub**
+```
+"List my repos"
+"When was latest commit?"
+"List commits in repo oripro-jarvis-OperationalExcellence-proto1"
+"Show commit details for abc1234"
+"Search for 'useState' in my github"
+"List PRs in repo X"
+"Show issues for repo X"
+"Can you verify that the commit comment is aligned with the code?"
+"What was the content of this commit?"
+```
+
 **Gmail** (if configured)
 ```
 "List my unread emails"
@@ -185,6 +229,13 @@ Detailed setup instructions for each service:
 2. **Hit Enter** or click Send
 3. **Watch the AI** process your request through MCP tools
 4. **Get instant results** from your integrated services
+
+### Scratchpad
+
+- **Persistent notes** - Located at the bottom of the left sidebar (50% height)
+- **Auto-saved** - Content automatically saved to localStorage
+- **Copy/paste support** - Use as a temporary workspace for notes, code snippets, or any text
+- **Survives restarts** - Your scratchpad content is restored when you reload the app
 
 ### MCP Tools Panel
 
@@ -223,14 +274,15 @@ Detailed setup instructions for each service:
 │ Free Services│   │ Paid Services   │
 │  • Jira      │   │  • Gmail        │
 │  • Slack     │   │  • Calendar     │
+│  • GitHub    │   │                 │
 └──────────────┘   └─────────────────┘
 ```
 
 ### Key Components
 
 **Frontend** (`webapp/src/`)
-- `chatStore.ts` - State management with Zustand
-- `RightPanel.tsx` - MCP tools list and usage indicators
+- `chatStore.ts` - State management with Zustand, natural language pattern matching, intelligent commit verification algorithm
+- `RightPanel.tsx` - MCP tools list and usage indicators with visual billing separation
 - `MessageList.tsx` - Chat conversation display
 - `Composer.tsx` - Message input with streaming
 
@@ -239,6 +291,7 @@ Detailed setup instructions for each service:
 - `billingService.cjs` - Usage tracking and quota protection
 - `googleAuthService.cjs` - OAuth2 for Google services
 - `slackAuthService.cjs` - Slack API authentication
+- `githubAuthService.cjs` - GitHub API authentication with Octokit
 
 ---
 
@@ -364,10 +417,16 @@ npm run test:ui
 | `github_list_repos` | List repositories | *"List my repos"* |
 | `github_repo_details` | Repository details | *"Details for repo X"* |
 | `github_commits` | List commits | *"List commits in repo X"* |
-| `github_commit_details` | Commit details | *"Show commit abc1234"* |
+| `github_commit_details` | Commit details with verification | *"Show commit abc1234"* |
 | `github_search_code` | Search code | *"Search for 'useState' in github"* |
 | `github_pull_requests` | List pull requests | *"List PRs in repo X"* |
 | `github_issues` | List issues | *"Show issues for repo X"* |
+
+**Intelligent Commit Verification** (via `github_commit_details`)
+- Automatically analyzes commit messages against code changes
+- Extracts and verifies 11+ different claim types
+- Provides alignment scores and evidence reports
+- Example: *"Verify commit alignment with code"* or *"Check if commit matches changelist"*
 
 ### Gmail Tools (Optional)
 | Tool Name | Description | Example |
@@ -417,7 +476,30 @@ This project is private and proprietary to Orion Productions.
 This AI assistant is optimized for game development workflows:
 - Quick access to Jira sprint planning
 - Team communication via Slack integration
+- Code repository management via GitHub
+- Intelligent commit verification for code quality
 - Calendar management for milestones
 - Natural language queries for rapid information retrieval
+
+## 🆕 Recent Updates
+
+### Scratchpad Feature (Latest)
+- **Persistent text area** in the left sidebar for notes and temporary workspace
+- **Auto-saved to localStorage** - Content persists across app restarts
+- **50% sidebar height** - Dedicated space for your notes
+- **Copy/paste support** - Perfect for quick notes, code snippets, or any text
+
+### Intelligent Commit Verification
+- **Automated analysis** of commit messages against code changes
+- **Alignment scoring** (0-10) with visual indicators
+- **Evidence-based verification** showing which claims are verified
+- **11+ claim types** automatically detected and verified
+- **File-to-claim mapping** for precise verification
+
+### GitHub MCP Tools Integration
+- **7 comprehensive tools** for repository management
+- **Organization-wide queries** for latest commits
+- **Code search** across all repositories
+- **100% FREE** - no billing, rate limits only
 
 **Built with ❤️ by Orion Productions**
