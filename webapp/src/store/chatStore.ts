@@ -1885,7 +1885,7 @@ export const useChatStore = create<ChatState>((set, getState) => ({
 		
 		// Meeting: Summarize latest meeting
 		if (getState().activeTools?.["meeting_summarize"]) {
-			const wantsSummary = /\b(?:summarize|summary|summarise)\b/i.test(content);
+			const wantsSummary = /\b(?:summarize|summary|summarise|summaries)\b/i.test(content);
 			const hasMeetingRef = /\b(?:meeting|recording|latest|last)\b/i.test(content);
 			
 			if (wantsSummary && hasMeetingRef) {
@@ -1898,7 +1898,18 @@ export const useChatStore = create<ChatState>((set, getState) => ({
 					
 					if (resp.ok) {
 						const json = await resp.json();
-						assistantMsg.content = `Meeting Summary:\n\n${json.result}`;
+						const summary = json.result;
+						
+						if (typeof summary === "string") {
+							if (summary.includes("not found") || summary.includes("No meetings") || summary.includes("Transcript not found")) {
+								assistantMsg.content = `Meeting Summary: ${summary}`;
+							} else {
+								assistantMsg.content = `Meeting Summary:\n\n${summary}`;
+							}
+						} else {
+							assistantMsg.content = `Meeting Summary:\n\n${JSON.stringify(summary, null, 2)}`;
+						}
+						
 						assistantMsg.status = "complete";
 						set({ conversations: [...getState().conversations] });
 						await setDb(CONV_KEY, getState().conversations);
@@ -1972,6 +1983,44 @@ export const useChatStore = create<ChatState>((set, getState) => ({
 					}
 				} catch (error) {
 					console.error("[Meeting List]", error);
+				}
+			}
+		}
+		
+		// Meeting: Get transcript
+		if (getState().activeTools?.["meeting_transcript"]) {
+			const wantsTranscript = /\b(?:transcript|transcription|text|content)\b/i.test(content);
+			const hasMeetingRef = /\b(?:meeting|recording|latest|last)\b/i.test(content);
+			
+			if (wantsTranscript && hasMeetingRef) {
+				try {
+					const resp = await fetch("http://localhost:3001/mcp/tools/meeting/transcript", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({})
+					});
+					
+					if (resp.ok) {
+						const json = await resp.json();
+						const transcript = json.result;
+						
+						if (typeof transcript === "string") {
+							if (transcript.includes("not found") || transcript.includes("No meetings")) {
+								assistantMsg.content = `Transcript: ${transcript}`;
+							} else {
+								assistantMsg.content = `Meeting Transcript:\n\n${transcript}`;
+							}
+						} else {
+							assistantMsg.content = `Meeting Transcript:\n\n${JSON.stringify(transcript, null, 2)}`;
+						}
+						
+						assistantMsg.status = "complete";
+						set({ conversations: [...getState().conversations] });
+						await setDb(CONV_KEY, getState().conversations);
+						return;
+					}
+				} catch (error) {
+					console.error("[Meeting Transcript]", error);
 				}
 			}
 		}
