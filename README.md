@@ -92,6 +92,7 @@ An intelligent AI assistant with **MCP (Model Context Protocol) Tools** that sea
 - 🗂️ Conversation history management
 - 📝 **Persistent scratchpad** - Write notes, paste text, use as temporary workspace (auto-saved)
 - ⚙️ Configurable AI providers (OpenAI, Gemini, Ollama)
+- 🌍 **Multi-language support** - Full UI translation in 8 languages (English, French, German, Spanish, Italian, Japanese, Chinese, Arabic)
 
 ---
 
@@ -229,6 +230,13 @@ Detailed setup instructions for each service:
 2. **Hit Enter** or click Send
 3. **Watch the AI** process your request through MCP tools
 4. **Get instant results** from your integrated services
+
+### Language Selection
+
+- **Language dropdown** - Located in the right panel header, next to "MCP Tools"
+- **8 languages available** - English (default), French, German, Spanish, Italian, Japanese, Chinese, Arabic
+- **Instant updates** - All UI elements update immediately when you change the language
+- **Persistent setting** - Your language preference is saved and restored automatically
 
 ### Scratchpad
 
@@ -483,7 +491,15 @@ This AI assistant is optimized for game development workflows:
 
 ## 🆕 Recent Updates
 
-### Scratchpad Feature (Latest)
+### Multi-Language Support (Latest)
+- **8 languages supported**: English, French, German, Spanish, Italian, Japanese, Chinese, Arabic
+- **Full UI translation** - All menus, buttons, labels, and messages are translated
+- **Language selector** - Easy dropdown menu in the right panel header
+- **Persistent preference** - Your language choice is saved and restored on app restart
+- **Real-time updates** - All UI elements update immediately when language changes
+- **Comprehensive coverage** - Settings modal, chat interface, recording controls, and all panels
+
+### Scratchpad Feature
 - **Persistent text area** in the left sidebar for notes and temporary workspace
 - **Auto-saved to localStorage** - Content persists across app restarts
 - **50% sidebar height** - Dedicated space for your notes
