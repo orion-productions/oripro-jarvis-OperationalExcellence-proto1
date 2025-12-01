@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { useChatStore } from "../store/chatStore";
+import { t, type Language } from "../i18n/translations";
 
 export function SettingsModal() {
 	const { settings, updateSettings, setUi } = useChatStore();
+	const currentLang = (settings.language || 'en') as Language;
 	const [local, setLocal] = useState(settings);
 	const [testing, setTesting] = useState<"idle" | "running" | "ok" | "fail">("idle");
 	const [testMessage, setTestMessage] = useState<string>("");
@@ -44,7 +46,7 @@ export function SettingsModal() {
 				const r = await fetch(`${base}/api/tags`);
 				if (!r.ok) throw new Error(`HTTP ${r.status}`);
 				setTesting("ok");
-				setTestMessage("Ollama reachable.");
+				setTestMessage(t("ollamaReachable", currentLang));
 				return;
 			}
 			if (local.provider === "openai") {
@@ -65,7 +67,7 @@ export function SettingsModal() {
 				});
 				if (!r.ok) throw new Error(`HTTP ${r.status}`);
 				setTesting("ok");
-				setTestMessage("OpenAI reachable.");
+				setTestMessage(t("openaiReachable", currentLang));
 				return;
 			}
 			if (local.provider === "gemini") {
@@ -78,13 +80,13 @@ export function SettingsModal() {
 				});
 				if (!r.ok) throw new Error(`HTTP ${r.status}`);
 				setTesting("ok");
-				setTestMessage("Gemini reachable.");
+				setTestMessage(t("geminiReachable", currentLang));
 				return;
 			}
-			throw new Error("Unknown provider");
+			throw new Error(t("unknownProvider", currentLang));
 		} catch (e) {
 			setTesting("fail");
-			setTestMessage((e as Error)?.message || "Connection failed.");
+			setTestMessage((e as Error)?.message || t("connectionFailed", currentLang));
 		}
 	}
 
@@ -92,7 +94,7 @@ export function SettingsModal() {
 		setTtsError("");
 		try {
 			if (!("speechSynthesis" in window)) {
-				setTtsError("Speech synthesis not supported in this browser.");
+				setTtsError(t("speechSynthesisNotSupported", currentLang));
 				return;
 			}
 			const synth = window.speechSynthesis;
@@ -109,7 +111,7 @@ export function SettingsModal() {
 			try { synth.resume(); } catch {}
 			synth.speak(utter);
 		} catch (e) {
-			setTtsError((e as Error)?.message || "Failed to speak.");
+			setTtsError((e as Error)?.message || t("failedToSpeak", currentLang));
 		}
 	}
 
@@ -117,24 +119,24 @@ export function SettingsModal() {
 		<div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
 			<div className="w-full max-w-lg rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-950 p-4">
 				<div className="flex items-center justify-between">
-					<h2 className="text-lg font-semibold">Settings</h2>
+					<h2 className="text-lg font-semibold">{t("settings", currentLang)}</h2>
 					<button onClick={close} className="text-xl">×</button>
 				</div>
 				<div className="mt-4 grid grid-cols-1 gap-3">
 					<label className="grid gap-1">
-						<span className="text-sm text-neutral-500">Provider</span>
+						<span className="text-sm text-neutral-500">{t("provider", currentLang)}</span>
 						<select
 							value={local.provider}
 							onChange={e => setLocal(s => ({ ...s, provider: e.target.value as any }))}
 							className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-2 py-1.5"
 						>
-							<option value="ollama">Ollama (local)</option>
-							<option value="openai">OpenAI</option>
-							<option value="gemini">Gemini</option>
+							<option value="ollama">{t("ollamaLocal", currentLang)}</option>
+							<option value="openai">{t("openai", currentLang)}</option>
+							<option value="gemini">{t("gemini", currentLang)}</option>
 						</select>
 					</label>
 					<label className="grid gap-1">
-						<span className="text-sm text-neutral-500">Model</span>
+						<span className="text-sm text-neutral-500">{t("model", currentLang)}</span>
 						<input
 							value={local.model}
 							onChange={e => setLocal(s => ({ ...s, model: e.target.value }))}
@@ -144,7 +146,7 @@ export function SettingsModal() {
 					</label>
 					{local.provider === "ollama" && (
 						<div className="grid gap-1">
-							<span className="text-sm text-neutral-500">Model presets (Ollama)</span>
+							<span className="text-sm text-neutral-500">{t("modelPresets", currentLang)}</span>
 							<div className="flex flex-wrap gap-2">
 								<button
 									type="button"
@@ -178,29 +180,29 @@ export function SettingsModal() {
 						</div>
 					)}
 					<label className="grid gap-1">
-						<span className="text-sm text-neutral-500">API base URL</span>
+						<span className="text-sm text-neutral-500">{t("apiBaseUrl", currentLang)}</span>
 						<input
 							value={local.baseUrl || ""}
 							onChange={e => setLocal(s => ({ ...s, baseUrl: e.target.value }))}
 							className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-2 py-1.5"
-							placeholder="Optional override"
+							placeholder={t("optionalOverride", currentLang)}
 						/>
 					</label>
 					{local.provider !== "ollama" && (
 						<label className="grid gap-1">
-							<span className="text-sm text-neutral-500">API Key</span>
+							<span className="text-sm text-neutral-500">{t("apiKey", currentLang)}</span>
 							<input
 								type="password"
 								value={local.apiKey || ""}
 								onChange={e => setLocal(s => ({ ...s, apiKey: e.target.value }))}
 								className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-2 py-1.5"
-								placeholder="Paste your API key"
+								placeholder={t("pasteYourApiKey", currentLang)}
 							/>
 						</label>
 					)}
 					<div className="grid grid-cols-2 gap-3">
 						<label className="grid gap-1">
-							<span className="text-sm text-neutral-500">Temperature</span>
+							<span className="text-sm text-neutral-500">{t("temperature", currentLang)}</span>
 							<input
 								type="number" step="0.1" min="0" max="2"
 								value={local.temperature}
@@ -209,7 +211,7 @@ export function SettingsModal() {
 							/>
 						</label>
 						<label className="grid gap-1">
-							<span className="text-sm text-neutral-500">Max tokens</span>
+							<span className="text-sm text-neutral-500">{t("maxTokens", currentLang)}</span>
 							<input
 								type="number" min="0"
 								value={local.maxTokens || 0}
@@ -224,17 +226,17 @@ export function SettingsModal() {
 							checked={local.autoTts ?? true}
 							onChange={e => setLocal(s => ({ ...s, autoTts: e.target.checked }))}
 						/>
-						<span className="text-sm">Auto speak assistant replies</span>
+						<span className="text-sm">{t("autoSpeakAssistantReplies", currentLang)}</span>
 					</label>
 					<div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-2">
 						<label className="grid gap-1 md:col-span-2">
-							<span className="text-sm text-neutral-500">Voice</span>
+							<span className="text-sm text-neutral-500">{t("voice", currentLang)}</span>
 							<select
 								value={local.ttsVoice || ""}
 								onChange={e => setLocal(s => ({ ...s, ttsVoice: e.target.value || undefined }))}
 								className="rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-2 py-1.5"
 							>
-								<option value="">Default</option>
+								<option value="">{t("default", currentLang)}</option>
 								{voices.map(v => (
 									<option key={v.voiceURI} value={v.name}>
 										{v.name} {v.lang ? `(${v.lang})` : ""}
@@ -243,7 +245,7 @@ export function SettingsModal() {
 							</select>
 						</label>
 						<label className="grid gap-1">
-							<span className="text-sm text-neutral-500">Rate</span>
+							<span className="text-sm text-neutral-500">{t("rate", currentLang)}</span>
 							<input
 								type="number" step="0.1" min="0.5" max="2"
 								value={local.ttsRate ?? 1}
@@ -252,7 +254,7 @@ export function SettingsModal() {
 							/>
 						</label>
 						<label className="grid gap-1">
-							<span className="text-sm text-neutral-500">Pitch</span>
+							<span className="text-sm text-neutral-500">{t("pitch", currentLang)}</span>
 							<input
 								type="number" step="0.1" min="0" max="2"
 								value={local.ttsPitch ?? 1}
@@ -262,7 +264,7 @@ export function SettingsModal() {
 						</label>
 					</div>
 					<div className="flex items-center gap-2">
-						<button onClick={testVoice} className="px-3 py-1.5 rounded-md border border-neutral-300 dark:border-neutral-700">Test voice</button>
+						<button onClick={testVoice} className="px-3 py-1.5 rounded-md border border-neutral-300 dark:border-neutral-700">{t("testVoice", currentLang)}</button>
 						{ttsError && <span className="text-sm text-red-600">{ttsError}</span>}
 					</div>
 				</div>
@@ -277,10 +279,10 @@ export function SettingsModal() {
 							disabled={testing === "running"}
 							className="px-3 py-1.5 rounded-md border border-neutral-300 dark:border-neutral-700 disabled:opacity-50"
 						>
-							{testing === "running" ? "Testing..." : "Test connection"}
+							{testing === "running" ? t("testing", currentLang) : t("testConnection", currentLang)}
 						</button>
-						<button onClick={close} className="px-3 py-1.5 rounded-md border border-neutral-300 dark:border-neutral-700">Cancel</button>
-						<button onClick={save} className="px-3 py-1.5 rounded-md bg-neutral-900 text-white dark:bg-white dark:text-neutral-900">Save</button>
+						<button onClick={close} className="px-3 py-1.5 rounded-md border border-neutral-300 dark:border-neutral-700">{t("cancel", currentLang)}</button>
+						<button onClick={save} className="px-3 py-1.5 rounded-md bg-neutral-900 text-white dark:bg-white dark:text-neutral-900">{t("save", currentLang)}</button>
 					</div>
 				</div>
 			</div>

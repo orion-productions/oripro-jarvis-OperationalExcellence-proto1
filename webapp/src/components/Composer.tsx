@@ -2,10 +2,12 @@ import type { FormEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import { useChatStore } from "../store/chatStore";
 import { tts } from "../utils/tts";
+import { t, type Language } from "../i18n/translations";
 
 export function Composer() {
 	const { sendMessage, setUi } = useChatStore();
 	const settings = useChatStore(s => s.settings);
+	const currentLang = (settings.language || 'en') as Language;
 	const micOn = useChatStore(s => s.ui.micOn ?? false);
 	const speakerOn = useChatStore(s => s.ui.speakerOn ?? true);
 	const [value, setValue] = useState("");
@@ -159,7 +161,7 @@ export function Composer() {
 					type="button"
 					onClick={() => setUi({ showSettings: true })}
 					className="rounded-md border border-neutral-300 dark:border-neutral-700 px-3 py-2 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800"
-					title="Open settings"
+					title={t("openSettings", currentLang)}
 				>
 					⚙️
 				</button>
@@ -167,9 +169,9 @@ export function Composer() {
 					type="button"
 					onClick={toggleMic}
 					className={`rounded-md border border-neutral-300 dark:border-neutral-700 px-3 py-2 text-sm ${listening || micOn ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900" : "hover:bg-neutral-100 dark:hover:bg-neutral-800"}`}
-					title="Microphone on/off"
+					title={t("microphoneOnOff", currentLang)}
 				>
-					{listening || micOn ? "Mic ON" : "Mic OFF"}
+					{listening || micOn ? t("micOn", currentLang) : t("micOff", currentLang)}
 				</button>
 				<button
 					type="button"
@@ -188,16 +190,16 @@ export function Composer() {
 						}
 					}}
 					className={`rounded-md border border-neutral-300 dark:border-neutral-700 px-3 py-2 text-sm ${speakerOn ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900" : "hover:bg-neutral-100 dark:hover:bg-neutral-800"}`}
-					title="Speaker on/off"
+					title={t("speakerOnOff", currentLang)}
 				>
-					{speakerOn ? "Speaker ON" : "Speaker OFF"}
+					{speakerOn ? t("speakerOn", currentLang) : t("speakerOff", currentLang)}
 				</button>
 				<div className="flex-1">
 					<div className="rounded-xl border border-neutral-300 dark:border-neutral-700 px-3 py-2 bg-white dark:bg-neutral-950">
 						<textarea
 							className="w-full bg-transparent outline-none resize-none leading-6"
 							rows={2}
-							placeholder="Message..."
+							placeholder={t("message", currentLang)}
 							value={value}
 							onChange={e => setValue(e.target.value)}
 						/>
@@ -215,7 +217,7 @@ export function Composer() {
 											type="button"
 											onClick={() => setImages(prev => prev.filter(i => i.id !== img.id))}
 											className="absolute -top-2 -right-2 bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 rounded-full w-5 h-5 text-xs"
-											aria-label="Remove image"
+											aria-label={t("removeImage", currentLang)}
 										>×</button>
 									</div>
 								))}
@@ -232,14 +234,14 @@ export function Composer() {
 										className="hidden"
 										onChange={e => handleFiles(e.target.files)}
 									/>
-									Add images
+									{t("addImages", currentLang)}
 								</label>
 							</div>
 							<button
 								type="submit"
 								className="rounded-md bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 px-4 py-2 text-sm font-medium"
 							>
-								Send
+								{t("send", currentLang)}
 							</button>
 						</div>
 					</div>

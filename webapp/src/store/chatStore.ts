@@ -45,6 +45,7 @@ export type Settings = {
 	ttsVoice?: string;
 	ttsRate?: number;
 	ttsPitch?: number;
+	language?: string; // Language code (en, fr, de, es, it, ja, zh, ar)
 };
 
 type UiState = {
@@ -100,6 +101,12 @@ const DEFAULT_ACTIVE_TOOLS: Record<string, boolean> = {
 	github_repo_details: true,
 	github_commits: true,
 	github_commit_details: true,
+	// Enable Meeting tools by default
+	meeting_list: true,
+	meeting_latest: true,
+	meeting_summarize: true,
+	meeting_sentiment: true,
+	meeting_transcript: true,
 	github_search_code: true,
 	github_pull_requests: true,
 	github_issues: true,
@@ -123,6 +130,7 @@ const settingsSchema = z.object({
 	ttsVoice: z.string().optional(),
 	ttsRate: z.number().optional(),
 	ttsPitch: z.number().optional(),
+	language: z.string().optional(),
 }) satisfies z.ZodType<Settings>;
 
 export const useChatStore = create<ChatState>((set, getState) => ({
@@ -138,6 +146,7 @@ export const useChatStore = create<ChatState>((set, getState) => ({
 		ttsVoice: undefined,
 		ttsRate: 1,
 		ttsPitch: 1,
+		language: "en",
 	},
 	ui: {
 		showSettings: false,
@@ -182,6 +191,7 @@ export const useChatStore = create<ChatState>((set, getState) => ({
 						ttsVoice: parsed.data.ttsVoice,
 						ttsRate: parsed.data.ttsRate ?? 1,
 						ttsPitch: parsed.data.ttsPitch ?? 1,
+						language: parsed.data.language ?? "en",
 					},
 				});
 			}
@@ -244,6 +254,7 @@ export const useChatStore = create<ChatState>((set, getState) => ({
 			ttsVoice: parsed.ttsVoice,
 			ttsRate: parsed.ttsRate ?? 1,
 			ttsPitch: parsed.ttsPitch ?? 1,
+			language: parsed.language ?? "en",
 		};
 		set({ settings: next });
 		await setDb(SETTINGS_KEY, next);
@@ -1864,6 +1875,138 @@ export const useChatStore = create<ChatState>((set, getState) => ({
 					return;
 				} catch (error) {
 					console.error("[Verify Commit]", error);
+				}
+			}
+		}
+		
+		// ============================================================
+		// Meeting Recording Tools
+		// ============================================================
+		
+		// Meeting: Summarize latest meeting
+		if (getState().activeTools?.["meeting_summarize"]) {
+			const wantsSummary = /\b(?:summarize|summary|summarise)\b/i.test(content);
+			const hasMeetingRef = /\b(?:meeting|recording|latest|last)\b/i.test(content);
+			
+			if (wantsSummary && hasMeetingRef) {
+				try {
+					const resp = await fetch("http://localhost:3001/mcp/tools/meeting/summarize", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({})
+					});
+					
+					if (resp.ok) {
+						const json = await resp.json();
+						assistantMsg.content = `Meeting Summary:\n\n${json.result}`;
+						assistantMsg.status = "complete";
+						set({ conversations: [...getState().conversations] });
+						await setDb(CONV_KEY, getState().conversations);
+						return;
+					}
+				} catch (error) {
+					console.error("[Meeting Summarize]", error);
+				}
+			}
+		}
+		
+		// Meeting: Sentiment analysis
+		if (getState().activeTools?.["meeting_sentiment"]) {
+			const wantsSentiment = /\b(?:sentiment|feeling|mood|tone|emotion)\b/i.test(content);
+			const hasMeetingRef = /\b(?:meeting|recording|latest|last)\b/i.test(content);
+			const hasAnalysis = /\b(?:analysis|analyze|analyse)\b/i.test(content);
+			
+			if ((wantsSentiment || hasAnalysis) && hasMeetingRef) {
+				try {
+					const resp = await fetch("http://localhost:3001/mcp/tools/meeting/sentiment", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({})
+					});
+					
+					if (resp.ok) {
+						const json = await resp.json();
+						assistantMsg.content = json.result;
+						assistantMsg.status = "complete";
+						set({ conversations: [...getState().conversations] });
+						await setDb(CONV_KEY, getState().conversations);
+						return;
+					}
+				} catch (error) {
+					console.error("[Meeting Sentiment]", error);
+				}
+			}
+		}
+		
+		// Meeting: List meetings
+		if (getState().activeTools?.["meeting_list"]) {
+			const wantsList = /\b(?:list|show|get|what)\s+(?:all\s+)?(?:recorded\s+)?meetings?\b/i.test(content);
+			
+			if (wantsList) {
+				try {
+					const resp = await fetch("http://localhost:3001/mcp/tools/meeting/list", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({})
+					});
+					
+					if (resp.ok) {
+						const json = await resp.json();
+						const meetings = json.result || [];
+						
+						if (meetings.length === 0) {
+							assistantMsg.content = "No meetings found.";
+						} else {
+							const lines = meetings.map((m: any) => {
+								const date = new Date(m.date).toLocaleString();
+								const duration = m.duration ? `${Math.floor(m.duration / 60)}:${String(m.duration % 60).padStart(2, '0')}` : "N/A";
+								return `- ${m.title} (${date}) - ${duration} - Status: ${m.status}`;
+							});
+							assistantMsg.content = `Recorded Meetings (${meetings.length}):\n${lines.join("\n")}`;
+						}
+						
+						assistantMsg.status = "complete";
+						set({ conversations: [...getState().conversations] });
+						await setDb(CONV_KEY, getState().conversations);
+						return;
+					}
+				} catch (error) {
+					console.error("[Meeting List]", error);
+				}
+			}
+		}
+		
+		// Meeting: Get latest meeting
+		if (getState().activeTools?.["meeting_latest"]) {
+			const wantsLatest = /\b(?:latest|last|most\s+recent|recent)\s+meeting\b/i.test(content);
+			
+			if (wantsLatest) {
+				try {
+					const resp = await fetch("http://localhost:3001/mcp/tools/meeting/latest", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({})
+					});
+					
+					if (resp.ok) {
+						const json = await resp.json();
+						const meeting = json.result;
+						
+						if (typeof meeting === "string") {
+							assistantMsg.content = meeting;
+						} else {
+							const date = new Date(meeting.date).toLocaleString();
+							const duration = meeting.duration ? `${Math.floor(meeting.duration / 60)}:${String(meeting.duration % 60).padStart(2, '0')}` : "N/A";
+							assistantMsg.content = `Latest Meeting:\n- Title: ${meeting.title}\n- Date: ${date}\n- Duration: ${duration}\n- Status: ${meeting.status}`;
+						}
+						
+						assistantMsg.status = "complete";
+						set({ conversations: [...getState().conversations] });
+						await setDb(CONV_KEY, getState().conversations);
+						return;
+					}
+				} catch (error) {
+					console.error("[Meeting Latest]", error);
 				}
 			}
 		}

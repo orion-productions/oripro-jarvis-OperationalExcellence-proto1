@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useChatStore } from "../store/chatStore";
+import { RecordingControl } from "./RecordingControl";
+import { LanguageSelector } from "./LanguageSelector";
+import { t, type Language } from "../i18n/translations";
 
 export function RightPanel() {
-	const { ui, setUi, activeTools, setToolActive } = useChatStore();
+	const { ui, setUi, activeTools, setToolActive, settings } = useChatStore();
+	const currentLang = (settings.language || 'en') as Language;
 	const topHeight = ui.rightTopHeight ?? 240;
 	const MIN_TOP = 120;
 	const MIN_BOTTOM = 120;
@@ -162,112 +166,113 @@ export function RightPanel() {
 		<div ref={containerRef} className="h-full flex flex-col">
 			<div style={{ height: topHeight }} className="border-b border-neutral-200 dark:border-neutral-800 flex flex-col">
 				<div className="px-3 py-2 text-xs uppercase tracking-wide text-neutral-500 flex items-center justify-between">
-					<span>MCP Tools</span>
 					<div className="flex items-center gap-2">
-					{/* Billing/Usage Display */}
-					{billingStatus && (
-						<div className="flex items-center gap-1.5 text-[10px] normal-case">
-							{/* ===== GOOGLE ONLY (CAN HAVE BILLING) ===== */}
-							<div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800" title="Google Services ONLY - May incur costs if free tier exceeded">
-								<span className={`font-mono font-semibold ${billingStatus.costs.thisMonth > 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-500'}`}>
-									💰${billingStatus.costs.thisMonth.toFixed(2)}
-								</span>
-								<span className="text-neutral-400 dark:text-neutral-600">|</span>
-								{/* Gmail usage */}
-								<span 
-									className={`${
-										billingStatus.gmail.percent > 80 ? 'text-orange-600 dark:text-orange-400' : 
-										billingStatus.gmail.percent > 50 ? 'text-yellow-600 dark:text-yellow-500' : 
-										'text-neutral-600 dark:text-neutral-400'
-									}`}
-									title={`Gmail: ${billingStatus.gmail.used.toLocaleString()}/${billingStatus.gmail.limit.toLocaleString()} units (Google - free tier, may cost if exceeded)`}
-								>
-									📧{billingStatus.gmail.percent.toFixed(1)}%
-								</span>
-								{/* Calendar usage */}
-								<span 
-									className={`${
-										billingStatus.calendar.percent > 80 ? 'text-orange-600 dark:text-orange-400' : 
-										billingStatus.calendar.percent > 50 ? 'text-yellow-600 dark:text-yellow-500' : 
-										'text-neutral-600 dark:text-neutral-400'
-									}`}
-									title={`Calendar: ${billingStatus.calendar.used.toLocaleString()}/${billingStatus.calendar.limit.toLocaleString()} queries (Google - free tier, may cost if exceeded)`}
-								>
-									📅{billingStatus.calendar.percent.toFixed(1)}%
-								</span>
-								{/* Auth status */}
-								{!billingStatus.authenticated && (
-									<span className="text-yellow-600" title="Google not authenticated">
-										🔒
-									</span>
-								)}
-							</div>
-							
-							{/* ===== FREE SERVICES (NO BILLING EVER) ===== */}
-							{(billingStatus.slack || billingStatus.github) && (
-								<>
-									<span className="text-neutral-400 dark:text-neutral-600">|</span>
-									<div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800" title="Free Services - NO billing ever, rate limits only">
-										{/* Slack (100% FREE) */}
-										{billingStatus.slack && (
-											<span 
-												className={`${
-													billingStatus.slack.percent > 80 ? 'text-orange-600 dark:text-orange-400' : 
-													billingStatus.slack.percent > 50 ? 'text-yellow-600 dark:text-yellow-500' : 
-													'text-neutral-600 dark:text-neutral-400'
-												}`}
-												title={`Slack: ${billingStatus.slack.used.toLocaleString()}/${billingStatus.slack.limit.toLocaleString()} requests (100% FREE - no billing ever)`}
-											>
-												💬{billingStatus.slack.percent.toFixed(1)}%
-											</span>
-										)}
-										{/* GitHub (100% FREE) */}
-										{billingStatus.github && (
-											<>
-												{billingStatus.slack && <span className="text-neutral-400 dark:text-neutral-600">|</span>}
-												<span 
-													className={`${
-														billingStatus.github.percent > 80 ? 'text-orange-600 dark:text-orange-400' : 
-														billingStatus.github.percent > 50 ? 'text-yellow-600 dark:text-yellow-500' : 
-														'text-neutral-600 dark:text-neutral-400'
-													}`}
-													title={`GitHub: ${billingStatus.github.used.toLocaleString()}/${billingStatus.github.limit.toLocaleString()} requests (100% FREE - no billing ever)`}
-												>
-													🐙{billingStatus.github.percent.toFixed(1)}%
-												</span>
-											</>
-										)}
-									</div>
-								</>
-							)}
-					</div>
-					)}
+						<span>{t('mcpTools', currentLang)}</span>
 						<button
 							className="text-[11px] px-2 py-0.5 rounded border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800"
 							onClick={() => {
-							(async () => {
-								try {
-									setToolsError("");
-									const r = await fetch("http://localhost:3001/mcp/tools", { cache: "no-store" });
-									if (!r.ok) throw new Error(`HTTP ${r.status}`);
-									const j = await r.json();
-									setTools(Array.isArray(j.tools) ? j.tools : []);
-								} catch (e) {
-									setToolsError((e as Error)?.message || "Failed to load tools");
-								}
-							})();
-						}}
-						title="Refresh tools"
-					>
-						Refresh
-					</button>
+								(async () => {
+									try {
+										setToolsError("");
+										const r = await fetch("http://localhost:3001/mcp/tools", { cache: "no-store" });
+										if (!r.ok) throw new Error(`HTTP ${r.status}`);
+										const j = await r.json();
+										setTools(Array.isArray(j.tools) ? j.tools : []);
+									} catch (e) {
+										setToolsError((e as Error)?.message || t('failedToLoadTools', currentLang));
+									}
+								})();
+							}}
+							title={t('refreshTools', currentLang)}
+						>
+							{t('refresh', currentLang)}
+						</button>
+						{/* Billing/Usage Display */}
+						{billingStatus && (
+							<div className="flex items-center gap-1.5 text-[10px] normal-case">
+								{/* ===== GOOGLE ONLY (CAN HAVE BILLING) ===== */}
+								<div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800" title={t('googleServices', currentLang) + ' - ' + t('mayIncurCosts', currentLang)}>
+									<span className={`font-mono font-semibold ${billingStatus.costs.thisMonth > 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-500'}`}>
+										💰${billingStatus.costs.thisMonth.toFixed(2)}
+									</span>
+									<span className="text-neutral-400 dark:text-neutral-600">|</span>
+									{/* Gmail usage */}
+									<span 
+										className={`${
+											billingStatus.gmail.percent > 80 ? 'text-orange-600 dark:text-orange-400' : 
+											billingStatus.gmail.percent > 50 ? 'text-yellow-600 dark:text-yellow-500' : 
+											'text-neutral-600 dark:text-neutral-400'
+										}`}
+										title={`${t('gmail', currentLang)}: ${billingStatus.gmail.used.toLocaleString()}/${billingStatus.gmail.limit.toLocaleString()} units (Google - free tier, may cost if exceeded)`}
+									>
+										📧{billingStatus.gmail.percent.toFixed(1)}%
+									</span>
+									{/* Calendar usage */}
+									<span 
+										className={`${
+											billingStatus.calendar.percent > 80 ? 'text-orange-600 dark:text-orange-400' : 
+											billingStatus.calendar.percent > 50 ? 'text-yellow-600 dark:text-yellow-500' : 
+											'text-neutral-600 dark:text-neutral-400'
+										}`}
+										title={`${t('calendar', currentLang)}: ${billingStatus.calendar.used.toLocaleString()}/${billingStatus.calendar.limit.toLocaleString()} queries (Google - free tier, may cost if exceeded)`}
+									>
+										📅{billingStatus.calendar.percent.toFixed(1)}%
+									</span>
+									{/* Auth status */}
+									{!billingStatus.authenticated && (
+										<span className="text-yellow-600" title={t('notAuthenticated', currentLang)}>
+											🔒
+										</span>
+									)}
+								</div>
+								
+								{/* ===== FREE SERVICES (NO BILLING EVER) ===== */}
+								{(billingStatus.slack || billingStatus.github) && (
+									<>
+										<span className="text-neutral-400 dark:text-neutral-600">|</span>
+										<div className="flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800" title={t('freeServices', currentLang) + ' - ' + t('noBillingEver', currentLang)}>
+											{/* Slack (100% FREE) */}
+											{billingStatus.slack && (
+												<span 
+													className={`${
+														billingStatus.slack.percent > 80 ? 'text-orange-600 dark:text-orange-400' : 
+														billingStatus.slack.percent > 50 ? 'text-yellow-600 dark:text-yellow-500' : 
+														'text-neutral-600 dark:text-neutral-400'
+													}`}
+													title={`${t('slack', currentLang)}: ${billingStatus.slack.used.toLocaleString()}/${billingStatus.slack.limit.toLocaleString()} requests (100% FREE - no billing ever)`}
+												>
+													💬{billingStatus.slack.percent.toFixed(1)}%
+												</span>
+											)}
+											{/* GitHub (100% FREE) */}
+											{billingStatus.github && (
+												<>
+													{billingStatus.slack && <span className="text-neutral-400 dark:text-neutral-600">|</span>}
+													<span 
+														className={`${
+															billingStatus.github.percent > 80 ? 'text-orange-600 dark:text-orange-400' : 
+															billingStatus.github.percent > 50 ? 'text-yellow-600 dark:text-yellow-500' : 
+															'text-neutral-600 dark:text-neutral-400'
+														}`}
+														title={`${t('github', currentLang)}: ${billingStatus.github.used.toLocaleString()}/${billingStatus.github.limit.toLocaleString()} requests (100% FREE - no billing ever)`}
+													>
+														🐙{billingStatus.github.percent.toFixed(1)}%
+													</span>
+												</>
+											)}
+										</div>
+									</>
+								)}
+							</div>
+						)}
 					</div>
+					<LanguageSelector />
 				</div>
 				<div className="px-3 pb-2 text-sm flex-1 overflow-y-auto">
 					{toolsError ? (
-						<div className="text-red-600">Failed to load tools: {toolsError}</div>
+						<div className="text-red-600">{t('failedToLoadTools', currentLang)}: {toolsError}</div>
 					) : tools.length === 0 ? (
-						<div className="text-neutral-500">No tools found.</div>
+						<div className="text-neutral-500">{t('noToolsFound', currentLang)}</div>
 					) : (
 						<ul className="space-y-1">
 							{tools.map(t => (
@@ -286,9 +291,13 @@ export function RightPanel() {
 				</div>
 			</div>
 			<div className="row-resizer" onMouseDown={onDragRow} />
+			{/* Meeting Recording Control - Between MCP Tools and Window */}
+			<div className="px-3 py-2 border-b border-neutral-200 dark:border-neutral-800">
+				<RecordingControl />
+			</div>
 			<div className="flex-1 flex flex-col">
 				<div className="px-3 py-2 text-xs uppercase tracking-wide text-neutral-500 border-b border-neutral-200 dark:border-neutral-800">
-					Window
+					{t('window', currentLang)}
 				</div>
 				<div className="flex-1 relative">
 					<canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />

@@ -5,12 +5,18 @@ const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
 const { google } = require("googleapis");
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
 
 dotenv.config();
 
 // Import Google services
 const googleAuth = require("./googleAuthService.cjs");
 const billingService = require("./billingService.cjs");
+const recordingService = require("./recordingService.cjs");
+const whisperService = require("./whisperService.cjs");
+const meetingAnalysis = require("./meetingAnalysisService.cjs");
 
 const app = express();
 app.use(cors({
@@ -19,6 +25,37 @@ app.use(cors({
 	allowedHeaders: ["Content-Type", "Authorization"],
 }));
 app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "500mb" }));
+
+// Configure multer for audio file uploads
+const upload = multer({
+	dest: path.join(__dirname, "recordings", "temp"),
+	limits: {
+		fileSize: 500 * 1024 * 1024 // 500MB max
+	},
+	fileFilter: (req, file, cb) => {
+		// Accept audio files
+		const allowedMimes = [
+			"audio/webm",
+			"audio/mp3",
+			"audio/wav",
+			"audio/m4a",
+			"audio/ogg",
+			"audio/x-m4a"
+		];
+		if (allowedMimes.includes(file.mimetype)) {
+			cb(null, true);
+		} else {
+			cb(new Error("Invalid file type. Only audio files are allowed."));
+		}
+	}
+});
+
+// Ensure temp directory exists
+const tempDir = path.join(__dirname, "recordings", "temp");
+if (!fs.existsSync(tempDir)) {
+	fs.mkdirSync(tempDir, { recursive: true });
+}
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
@@ -396,6 +433,62 @@ const MCP_TOOLS = [
 				}
 			},
 			required: ["repo"],
+		},
+	},
+	// Meeting Recording Tools
+	{
+		name: "meeting_list",
+		title: "List all recorded meetings",
+		inputSchema: {
+			type: "object",
+			properties: {},
+		},
+	},
+	{
+		name: "meeting_latest",
+		title: "Get the latest recorded meeting",
+		inputSchema: {
+			type: "object",
+			properties: {},
+		},
+	},
+	{
+		name: "meeting_transcript",
+		title: "Get transcript for a meeting",
+		inputSchema: {
+			type: "object",
+			properties: {
+				meetingId: {
+					type: "string",
+					description: "Meeting ID (optional, defaults to latest)"
+				}
+			},
+		},
+	},
+	{
+		name: "meeting_summarize",
+		title: "Summarize a meeting",
+		inputSchema: {
+			type: "object",
+			properties: {
+				meetingId: {
+					type: "string",
+					description: "Meeting ID (optional, defaults to latest)"
+				}
+			},
+		},
+	},
+	{
+		name: "meeting_sentiment",
+		title: "Analyze sentiment of a meeting",
+		inputSchema: {
+			type: "object",
+			properties: {
+				meetingId: {
+					type: "string",
+					description: "Meeting ID (optional, defaults to latest)"
+				}
+			},
 		},
 	},
 ];
@@ -2495,6 +2588,517 @@ app.post("/mcp/tools/jira-github/verify-alignment", async (req, res) => {
 		console.error("[Jira-GitHub Alignment]", error.message);
 		res.status(500).json({ ok: false, error: error.message });
 	}
+});
+
+// ============================================
+// Meeting MCP Tools
+// ============================================
+
+// List all meetings
+app.post("/mcp/tools/meeting/list", async (req, res) => {
+	try {
+		const meetings = recordingService.getAllMeetings();
+		res.json({ ok: true, result: meetings });
+	} catch (error) {
+		console.error("[Meeting MCP]", error);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// Get latest meeting
+app.post("/mcp/tools/meeting/latest", async (req, res) => {
+	try {
+		const meetings = recordingService.getAllMeetings();
+		const latest = meetings.length > 0 ? meetings[0] : null;
+		if (!latest) {
+			return res.json({ ok: true, result: "No meetings found." });
+		}
+		res.json({ ok: true, result: latest });
+	} catch (error) {
+		console.error("[Meeting MCP]", error);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// Get transcript
+app.post("/mcp/tools/meeting/transcript", async (req, res) => {
+	try {
+		let { meetingId } = req.body;
+		
+		// If no meetingId, use latest
+		if (!meetingId) {
+			const meetings = recordingService.getAllMeetings();
+			if (meetings.length === 0) {
+				return res.json({ ok: true, result: "No meetings found." });
+			}
+			meetingId = meetings[0].id;
+		}
+		
+		const meeting = recordingService.getMeeting(meetingId);
+		if (!meeting) {
+			return res.json({ ok: true, result: `Meeting ${meetingId} not found.` });
+		}
+		
+		// Check meeting status
+		if (meeting.status === "processing") {
+			return res.json({ 
+				ok: true, 
+				result: `Transcription still in progress for meeting ${meetingId}. Please wait a few minutes and try again.` 
+			});
+		}
+		
+		if (meeting.status === "error") {
+			const errorMsg = meeting.error ? ` Error: ${meeting.error}` : "";
+			return res.json({ 
+				ok: true, 
+				result: `Transcription failed for meeting ${meetingId}.${errorMsg} Please check if Whisper is installed and configured correctly. See WHISPER_SETUP.md for instructions.` 
+			});
+		}
+		
+		const transcript = recordingService.getTranscript(meetingId);
+		if (!transcript) {
+			return res.json({ 
+				ok: true, 
+				result: `Transcript not found for meeting ${meetingId}. Status: ${meeting.status}. Transcription may have failed or is still in progress.` 
+			});
+		}
+		
+		const fullText = transcript.fullText || transcript.segments?.map(s => s.text).join(" ") || "";
+		res.json({ ok: true, result: fullText });
+	} catch (error) {
+		console.error("[Meeting MCP]", error);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// Summarize meeting
+app.post("/mcp/tools/meeting/summarize", async (req, res) => {
+	try {
+		let { meetingId } = req.body;
+		
+		// If no meetingId, use latest
+		if (!meetingId) {
+			const meetings = recordingService.getAllMeetings();
+			if (meetings.length === 0) {
+				return res.json({ ok: true, result: "No meetings found." });
+			}
+			meetingId = meetings[0].id;
+		}
+		
+		const meeting = recordingService.getMeeting(meetingId);
+		if (!meeting) {
+			return res.json({ ok: true, result: `Meeting ${meetingId} not found.` });
+		}
+		
+		// Check meeting status
+		if (meeting.status === "processing") {
+			return res.json({ 
+				ok: true, 
+				result: `Transcription still in progress for meeting ${meetingId}. Please wait a few minutes and try again.` 
+			});
+		}
+		
+		if (meeting.status === "error") {
+			return res.json({ 
+				ok: true, 
+				result: `Transcription failed for meeting ${meetingId}. Please check if Whisper is installed and configured correctly. See WHISPER_SETUP.md for instructions.` 
+			});
+		}
+		
+		const transcript = recordingService.getTranscript(meetingId);
+		if (!transcript) {
+			return res.json({ 
+				ok: true, 
+				result: `Transcript not found for meeting ${meetingId}. Status: ${meeting.status}. Transcription may have failed or is still in progress.` 
+			});
+		}
+		
+		const summary = await meetingAnalysis.summarizeMeeting(transcript);
+		recordingService.updateMeetingAnalysis(meetingId, { summary });
+		
+		res.json({ ok: true, result: summary });
+	} catch (error) {
+		console.error("[Meeting MCP]", error);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// Analyze sentiment
+app.post("/mcp/tools/meeting/sentiment", async (req, res) => {
+	try {
+		let { meetingId } = req.body;
+		
+		// If no meetingId, use latest
+		if (!meetingId) {
+			const meetings = recordingService.getAllMeetings();
+			if (meetings.length === 0) {
+				return res.json({ ok: true, result: "No meetings found." });
+			}
+			meetingId = meetings[0].id;
+		}
+		
+		const meeting = recordingService.getMeeting(meetingId);
+		if (!meeting) {
+			return res.json({ ok: true, result: `Meeting ${meetingId} not found.` });
+		}
+		
+		// Check meeting status
+		if (meeting.status === "processing") {
+			return res.json({ 
+				ok: true, 
+				result: `Transcription still in progress for meeting ${meetingId}. Please wait a few minutes and try again.` 
+			});
+		}
+		
+		if (meeting.status === "error") {
+			return res.json({ 
+				ok: true, 
+				result: `Transcription failed for meeting ${meetingId}. Please check if Whisper is installed and configured correctly. See WHISPER_SETUP.md for instructions.` 
+			});
+		}
+		
+		const transcript = recordingService.getTranscript(meetingId);
+		if (!transcript) {
+			return res.json({ 
+				ok: true, 
+				result: `Transcript not found for meeting ${meetingId}. Status: ${meeting.status}. Transcription may have failed or is still in progress.` 
+			});
+		}
+		
+		const sentiment = await meetingAnalysis.analyzeSentiment(transcript);
+		recordingService.updateMeetingAnalysis(meetingId, { sentiment });
+		
+		const result = `Sentiment Analysis:\n- Overall: ${sentiment.overall}\n- Score: ${sentiment.score.toFixed(2)} (range: -1 to 1)\n- Analysis: ${sentiment.analysis}`;
+		res.json({ ok: true, result });
+	} catch (error) {
+		console.error("[Meeting MCP]", error);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// ============================================
+// Meeting Recording Endpoints
+// ============================================
+
+// Create a new meeting
+app.post("/api/meetings/start", (req, res) => {
+	try {
+		const { title, participants } = req.body;
+		const meeting = recordingService.createMeeting(title, participants);
+		res.json({ ok: true, meeting });
+	} catch (error) {
+		console.error("[Meeting] Error creating meeting:", error);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// Upload audio file for a meeting
+app.post("/api/meetings/upload", upload.single("audio"), async (req, res) => {
+	try {
+		if (!req.file) {
+			return res.status(400).json({ ok: false, error: "No audio file provided" });
+		}
+		
+		const { meetingId } = req.body;
+		if (!meetingId) {
+			// Clean up uploaded file
+			fs.unlinkSync(req.file.path);
+			return res.status(400).json({ ok: false, error: "Meeting ID is required" });
+		}
+		
+		// Read the uploaded file
+		const audioBuffer = fs.readFileSync(req.file.path);
+		
+		// Update meeting with audio
+		const meeting = recordingService.updateMeetingWithAudio(meetingId, audioBuffer, req.file.originalname || "audio.webm");
+		
+		// Clean up temp file
+		fs.unlinkSync(req.file.path);
+		
+		// Start transcription in background (use the saved audio path)
+		const audioPath = recordingService.getAudioPath(meetingId);
+		if (audioPath) {
+			transcribeMeetingAsync(meetingId, audioPath).catch(err => {
+				console.error("[Meeting] Transcription error:", err);
+			});
+		}
+		
+		res.json({ ok: true, meeting, status: "processing" });
+	} catch (error) {
+		console.error("[Meeting] Error uploading audio:", error);
+		if (req.file && fs.existsSync(req.file.path)) {
+			fs.unlinkSync(req.file.path);
+		}
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// Get all meetings
+app.get("/api/meetings", (req, res) => {
+	try {
+		const meetings = recordingService.getAllMeetings();
+		res.json({ ok: true, meetings });
+	} catch (error) {
+		console.error("[Meeting] Error getting meetings:", error);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// Retry transcription for a meeting (must be before /api/meetings/:id to avoid route conflict)
+app.post("/api/meetings/:id/retry-transcription", async (req, res) => {
+	try {
+		const meetingId = req.params.id;
+		const meeting = recordingService.getMeeting(meetingId);
+		if (!meeting) {
+			return res.status(404).json({ ok: false, error: "Meeting not found" });
+		}
+		
+		const audioPath = recordingService.getAudioPath(meetingId);
+		if (!audioPath || !fs.existsSync(audioPath)) {
+			return res.status(404).json({ ok: false, error: "Audio file not found" });
+		}
+		
+		// Update status to processing
+		meeting.status = "processing";
+		meeting.error = null;
+		recordingService.saveMeeting(meeting);
+		
+		// Start transcription in background
+		transcribeMeetingAsync(meetingId, audioPath).catch(err => {
+			console.error("[Meeting] Retry transcription error:", err);
+		});
+		
+		res.json({ ok: true, message: "Transcription retry started", meeting });
+	} catch (error) {
+		console.error("[Meeting] Error retrying transcription:", error);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// Get a specific meeting
+app.get("/api/meetings/:id", (req, res) => {
+	try {
+		const meeting = recordingService.getMeeting(req.params.id);
+		if (!meeting) {
+			return res.status(404).json({ ok: false, error: "Meeting not found" });
+		}
+		res.json({ ok: true, meeting });
+	} catch (error) {
+		console.error("[Meeting] Error getting meeting:", error);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// Get transcript for a meeting
+app.get("/api/meetings/:id/transcript", (req, res) => {
+	try {
+		const transcript = recordingService.getTranscript(req.params.id);
+		if (!transcript) {
+			return res.status(404).json({ ok: false, error: "Transcript not found" });
+		}
+		res.json({ ok: true, transcript });
+	} catch (error) {
+		console.error("[Meeting] Error getting transcript:", error);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// Get audio file for a meeting
+app.get("/api/meetings/:id/audio", (req, res) => {
+	try {
+		const audioPath = recordingService.getAudioPath(req.params.id);
+		if (!audioPath || !fs.existsSync(audioPath)) {
+			return res.status(404).json({ ok: false, error: "Audio file not found" });
+		}
+		res.sendFile(path.resolve(audioPath));
+	} catch (error) {
+		console.error("[Meeting] Error getting audio:", error);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// Summarize a meeting
+app.post("/api/meetings/:id/summarize", async (req, res) => {
+	try {
+		const meeting = recordingService.getMeeting(req.params.id);
+		if (!meeting) {
+			return res.status(404).json({ ok: false, error: "Meeting not found" });
+		}
+		
+		// Check meeting status
+		if (meeting.status === "processing") {
+			return res.status(202).json({ 
+				ok: false, 
+				error: "Transcription still in progress. Please wait and try again.",
+				status: "processing"
+			});
+		}
+		
+		if (meeting.status === "error") {
+			return res.status(500).json({ 
+				ok: false, 
+				error: "Transcription failed. Please check server logs for details.",
+				status: "error"
+			});
+		}
+		
+		const transcript = recordingService.getTranscript(req.params.id);
+		if (!transcript) {
+			return res.status(404).json({ 
+				ok: false, 
+				error: "Transcript not found. Transcription may have failed or is still in progress.",
+				status: meeting.status
+			});
+		}
+		
+		const summary = await meetingAnalysis.summarizeMeeting(transcript);
+		const updatedMeeting = recordingService.updateMeetingAnalysis(req.params.id, { summary });
+		
+		res.json({ ok: true, summary, meeting: updatedMeeting });
+	} catch (error) {
+		console.error("[Meeting] Error summarizing:", error);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// Analyze sentiment of a meeting
+app.post("/api/meetings/:id/sentiment", async (req, res) => {
+	try {
+		const meeting = recordingService.getMeeting(req.params.id);
+		if (!meeting) {
+			return res.status(404).json({ ok: false, error: "Meeting not found" });
+		}
+		
+		// Check meeting status
+		if (meeting.status === "processing") {
+			return res.status(202).json({ 
+				ok: false, 
+				error: "Transcription still in progress. Please wait and try again.",
+				status: "processing"
+			});
+		}
+		
+		if (meeting.status === "error") {
+			return res.status(500).json({ 
+				ok: false, 
+				error: "Transcription failed. Please check server logs for details.",
+				status: "error"
+			});
+		}
+		
+		const transcript = recordingService.getTranscript(req.params.id);
+		if (!transcript) {
+			return res.status(404).json({ 
+				ok: false, 
+				error: "Transcript not found. Transcription may have failed or is still in progress.",
+				status: meeting.status
+			});
+		}
+		
+		const sentiment = await meetingAnalysis.analyzeSentiment(transcript);
+		const updatedMeeting = recordingService.updateMeetingAnalysis(req.params.id, { sentiment });
+		
+		res.json({ ok: true, sentiment, meeting: updatedMeeting });
+	} catch (error) {
+		console.error("[Meeting] Error analyzing sentiment:", error);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// Delete a meeting
+app.delete("/api/meetings/:id", (req, res) => {
+	try {
+		const deleted = recordingService.deleteMeeting(req.params.id);
+		if (!deleted) {
+			return res.status(404).json({ ok: false, error: "Meeting not found" });
+		}
+		res.json({ ok: true, message: "Meeting deleted" });
+	} catch (error) {
+		console.error("[Meeting] Error deleting meeting:", error);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// Check Whisper availability
+app.get("/api/meetings/whisper/status", async (req, res) => {
+	try {
+		const status = await whisperService.checkWhisperAvailable();
+		res.json({ ok: true, ...status });
+	} catch (error) {
+		console.error("[Meeting] Error checking Whisper:", error);
+		res.status(500).json({ ok: false, error: error.message });
+	}
+});
+
+// Async transcription function
+async function transcribeMeetingAsync(meetingId, tempAudioPath) {
+	try {
+		console.log(`[Meeting] Starting transcription for meeting ${meetingId}...`);
+		
+		const meeting = recordingService.getMeeting(meetingId);
+		if (!meeting) {
+			throw new Error(`Meeting ${meetingId} not found`);
+		}
+		
+		// Check if Whisper is available
+		const whisperStatus = await whisperService.checkWhisperAvailable();
+		if (!whisperStatus.available) {
+			const errorMsg = `Whisper not available. Python: ${whisperStatus.python}, Whisper: ${whisperStatus.whisper}. Please install Whisper: pip install openai-whisper`;
+			console.error(`[Meeting] ${errorMsg}`);
+			meeting.status = "error";
+			meeting.error = errorMsg;
+			recordingService.saveMeeting(meeting);
+			return;
+		}
+		
+		// Get the actual audio path from meeting
+		const audioPath = recordingService.getAudioPath(meetingId);
+		if (!audioPath || !fs.existsSync(audioPath)) {
+			throw new Error(`Audio file not found for meeting ${meetingId}`);
+		}
+		
+		console.log(`[Meeting] Transcribing audio file: ${audioPath}`);
+		console.log(`[Meeting] Audio file exists: ${fs.existsSync(audioPath)}`);
+		if (fs.existsSync(audioPath)) {
+			const stats = fs.statSync(audioPath);
+			console.log(`[Meeting] Audio file size: ${stats.size} bytes`);
+		}
+		
+		// Transcribe using Whisper
+		const transcript = await whisperService.transcribeAudio(audioPath);
+		
+		// Save transcript
+		recordingService.updateMeetingWithTranscript(meetingId, transcript);
+		
+		console.log(`[Meeting] Transcription completed for meeting ${meetingId}. Duration: ${transcript.segments?.length || 0} segments`);
+	} catch (error) {
+		console.error(`[Meeting] Transcription failed for meeting ${meetingId}:`, error);
+		const meeting = recordingService.getMeeting(meetingId);
+		if (meeting) {
+			meeting.status = "error";
+			meeting.error = error.message || "Unknown transcription error";
+			recordingService.saveMeeting(meeting);
+		}
+	}
+}
+
+// Global error handler - must be last, ensures all errors return JSON
+app.use((err, req, res, next) => {
+	console.error("[Server] Unhandled error:", err);
+	// Always return JSON, never HTML
+	res.status(err.status || 500).json({ 
+		ok: false, 
+		error: err.message || "Internal server error" 
+	});
+});
+
+// 404 handler - return JSON instead of HTML
+app.use((req, res) => {
+	console.warn(`[Server] 404 - Route not found: ${req.method} ${req.path}`);
+	res.status(404).json({ 
+		ok: false, 
+		error: `Route not found: ${req.method} ${req.path}` 
+	});
 });
 
 const PORT = process.env.PORT || 3001;

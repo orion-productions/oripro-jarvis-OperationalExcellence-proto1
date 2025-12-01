@@ -1,10 +1,12 @@
 import { useChatStore } from "../store/chatStore";
 import { useState, useEffect, useRef } from "react";
+import { t, type Language } from "../i18n/translations";
 
 const SCRATCHPAD_KEY = "jarvis-scratchpad";
 
 export function Sidebar() {
-	const { conversations, createConversation, setActiveConversationId, deleteConversation, renameConversation, activeConversationId } = useChatStore();
+	const { conversations, createConversation, setActiveConversationId, deleteConversation, renameConversation, activeConversationId, settings } = useChatStore();
+	const currentLang = (settings.language || 'en') as Language;
 	const [editingId, setEditingId] = useState<string | null>(null);
 	const [editValue, setEditValue] = useState<string>("");
 	const [scratchpad, setScratchpad] = useState<string>(() => {
@@ -52,7 +54,7 @@ export function Sidebar() {
 						onClick={() => createConversation()}
 						className="w-full rounded-md bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 px-3 py-2 text-sm font-medium"
 					>
-						New chat
+						{t('newChat', currentLang)}
 					</button>
 				</div>
 				<div className="flex-1 px-2 pb-2 overflow-y-auto space-y-1 min-h-0">
@@ -99,7 +101,7 @@ export function Sidebar() {
 										<div className="text-xs text-neutral-500 truncate">{new Date(c.updatedAt).toLocaleString()}</div>
 									</button>
 									<button
-										title="Rename chat"
+										title={t('settings', currentLang)}
 										onClick={(e) => {
 											e.stopPropagation();
 											setEditingId(c.id);
@@ -110,7 +112,7 @@ export function Sidebar() {
 										✏️
 									</button>
 									<button
-										title="Delete chat"
+										title={t('deleteChat', currentLang)}
 										onClick={async (e) => {
 											e.stopPropagation();
 											await deleteConversation(c.id);
@@ -132,7 +134,7 @@ export function Sidebar() {
 			{/* Scratchpad Section - 50% height */}
 			<div className="flex flex-col" style={{ height: "50%" }}>
 				<div className="p-2 flex-shrink-0 border-b border-neutral-200 dark:border-neutral-800">
-					<div className="text-xs font-medium text-neutral-600 dark:text-neutral-400">Scratchpad</div>
+					<div className="text-xs font-medium text-neutral-600 dark:text-neutral-400">{t('scratchpad', currentLang)}</div>
 				</div>
 				<div className="flex-1 p-2 min-h-0">
 					<textarea
